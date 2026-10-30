@@ -1,0 +1,12 @@
+# Choreo component descriptor for the Authsignal Sync Service.
+# See https://wso2.com/choreo/docs/develop-components/configure-endpoints-body/
+schemaVersion: "1.2"
+endpoints:
+  - name: authsignal-sync
+    displayName: Authsignal Sync Service
+    service:
+      basePath: /
+      port: 9090
+    type: REST
+    networkVisibilities:
+      - Public

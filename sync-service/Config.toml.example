@@ -1,0 +1,24 @@
+# Copy to Config.toml for a local run (`bal run`). Config.toml is git-ignored; never commit secrets.
+# On Choreo the same values are entered in Configure & Deploy instead.
+
+port = 9090
+
+# Attempts per Authsignal call, including the first, and the timeout of each call in seconds.
+maxAttempts = 3
+requestTimeout = 5
+
+# One block per IS tenant or Asgardeo root organisation that sends webhooks here.
+[[tenants]]
+# IS tenant domain (carbon.super for the super tenant) or Asgardeo organisation name.
+name = "carbon.super"
+# Same secret as the webhook in Console > Webhooks.
+webhookSecret = "<webhook secret>"
+# Authsignal region: us, eu, au, ca or uk.
+region = "us"
+authsignalSecretKey = "<Authsignal secret key>"
+# Must match Authsignal.UserIdentifier of the connector: userId (recommended) or username.
+userIdentifier = "userId"
+# Primary user store name: PRIMARY on WSO2 IS, DEFAULT on Asgardeo.
+primaryUserStore = "PRIMARY"
+syncContactDetails = true
+deleteUsers = true
