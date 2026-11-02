@@ -21,4 +21,7 @@ userIdentifier = "userId"
 # Primary user store name: PRIMARY on WSO2 IS, DEFAULT on Asgardeo.
 primaryUserStore = "PRIMARY"
 syncContactDetails = true
+# true: sync an email or mobile change only when the same update marks it as verified.
+# false: sync every change. Authsignal stores the value as verified either way.
+requireVerifiedContactDetails = true
 deleteUsers = true

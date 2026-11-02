@@ -61,6 +61,28 @@ function testValueWithoutVerifiedFlagIsNotProven() {
 }
 
 @test:Config
+function testValueWithoutVerifiedFlagIsSyncedWhenVerificationIsNotRequired() {
+
+    VerifiedContactDetails details = getVerifiedContactDetails({
+        updatedClaims: [
+            {uri: EMAIL_CLAIM, value: "new@example.com"},
+            {uri: MOBILE_CLAIM, value: "+94771111111"},
+            {uri: MOBILE_VERIFIED_CLAIM, value: "false"}
+        ]
+    }, requireVerified = false);
+    test:assertEquals(details, {email: "new@example.com", phoneNumber: "+94771111111"});
+}
+
+@test:Config
+function testVerifiedFlagWithoutValueIsNotSyncedWhenVerificationIsNotRequired() {
+
+    VerifiedContactDetails details = getVerifiedContactDetails({
+        updatedClaims: [{uri: EMAIL_VERIFIED_CLAIM, value: "true"}, {uri: MOBILE_CLAIM, value: "0771111111"}]
+    }, requireVerified = false);
+    test:assertEquals(details, {email: (), phoneNumber: ()});
+}
+
+@test:Config
 function testVerifiedFlagWithoutValueIsNotProven() {
 
     VerifiedContactDetails details = getVerifiedContactDetails({

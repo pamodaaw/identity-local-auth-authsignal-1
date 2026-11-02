@@ -24,3 +24,9 @@ webhookSecret = "nodelete-webhook-secret"
 authsignalSecretKey = "nodelete-secret-key"
 deleteUsers = false
 syncContactDetails = false
+
+[[tenants]]
+name = "unverified"
+webhookSecret = "unverified-webhook-secret"
+authsignalSecretKey = "unverified-secret-key"
+requireVerifiedContactDetails = false

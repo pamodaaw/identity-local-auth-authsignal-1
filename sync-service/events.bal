@@ -81,10 +81,10 @@ type EventUserStore record {
     string name?;
 };
 
-# Verified contact details that an event proves, to set on Authsignal.
+# Contact details of an event, to set as verified on Authsignal.
 #
-# + email - Verified email address, or nil if the event does not prove one
-# + phoneNumber - Verified mobile number in E.164 format, or nil if the event does not prove one
+# + email - Email address, or nil if the event has none to sync
+# + phoneNumber - Mobile number in E.164 format, or nil if the event has none to sync
 type VerifiedContactDetails record {|
     string? email = ();
     string? phoneNumber = ();
@@ -108,15 +108,18 @@ isolated function getTenantName(SecurityEventToken token) returns string? {
     return ();
 }
 
-# Get the verified contact details a profile update proves.
+# Get the contact details of a profile update to set as verified on Authsignal.
 #
-# The event carries only the claims that changed. A value is synced only when the same update also marks it as
-# verified, which is how the email and mobile verification flows of WSO2 IS and Asgardeo write it. A changed value
-# without its verified flag, or a flag without the value, is not synced. Removals are never synced.
+# The event carries only the claims that changed. By default a value is synced only when the same update also marks
+# it as verified, which is how the email and mobile verification flows of WSO2 IS and Asgardeo write it; a changed
+# value without its verified flag is then not synced. When verification is not required, every changed value is
+# synced, whatever its verified flag. A flag without the value, and removals, are never synced.
 #
 # + user - User of the profile update event
-# + return - Verified email and mobile number, each nil when not proven
-isolated function getVerifiedContactDetails(EventUser user) returns VerifiedContactDetails {
+# + requireVerified - Whether a value needs its verified flag set to true in the same update
+# + return - Email and mobile number to sync, each nil when there is none
+isolated function getVerifiedContactDetails(EventUser user, boolean requireVerified = true)
+        returns VerifiedContactDetails {
 
     map<string> changed = {};
     foreach EventClaim claim in [...(user?.addedClaims ?: []), ...(user?.updatedClaims ?: [])] {
@@ -128,14 +131,15 @@ isolated function getVerifiedContactDetails(EventUser user) returns VerifiedCont
 
     string? email = ();
     string? emailValue = changed[EMAIL_CLAIM];
-    if emailValue is string && emailValue != "" && isTrue(changed[EMAIL_VERIFIED_CLAIM]) {
+    if emailValue is string && emailValue != "" && (!requireVerified || isTrue(changed[EMAIL_VERIFIED_CLAIM])) {
         email = emailValue;
     }
 
     string? phoneNumber = ();
     string? mobileValue = changed[MOBILE_CLAIM];
     // Authsignal takes E.164 numbers only, which is what the connector writes.
-    if mobileValue is string && mobileValue.startsWith("+") && isTrue(changed[MOBILE_VERIFIED_CLAIM]) {
+    if mobileValue is string && mobileValue.startsWith("+")
+            && (!requireVerified || isTrue(changed[MOBILE_VERIFIED_CLAIM])) {
         phoneNumber = mobileValue;
     }
     return {email, phoneNumber};

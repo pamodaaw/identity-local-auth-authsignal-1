@@ -213,6 +213,25 @@ function testUnverifiedChangeIsNotSynced() returns error? {
 }
 
 @test:Config
+function testUnverifiedChangeIsSyncedAsVerifiedWhenVerificationIsNotRequired() returns error? {
+
+    http:Response response = check deliver(profileUpdate("unverified", "enrolled", updatedClaims = [
+        claim(EMAIL_CLAIM, "new@example.com"),
+        claim(MOBILE_CLAIM, "+94771111111")
+    ]), secret = "unverified-webhook-secret");
+    test:assertEquals(response.statusCode, 200);
+    RecordedCall[] calls = takeCalls();
+    test:assertEquals(calls.length(), 2);
+    test:assertEquals(calls[1].method, "PATCH");
+    test:assertEquals(calls[1].body, {
+        email: "new@example.com",
+        emailVerified: true,
+        phoneNumber: "+94771111111",
+        phoneNumberVerified: true
+    });
+}
+
+@test:Config
 function testUnrelatedChangeMakesNoCalls() returns error? {
 
     http:Response response = check deliver(profileUpdate("acme.com", "enrolled", updatedClaims = [

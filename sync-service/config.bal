@@ -26,7 +26,9 @@ public const USERNAME = "username";
 # + authsignalSecretKey - Authsignal Server API secret key
 # + userIdentifier - How users are identified to Authsignal: `userId` or `username`. Must match the connector.
 # + primaryUserStore - Name of the primary user store, left out of username based Authsignal user IDs
-# + syncContactDetails - Whether verified email and mobile changes are synced to Authsignal
+# + syncContactDetails - Whether email and mobile changes are synced to Authsignal
+# + requireVerifiedContactDetails - Whether an email or mobile change is synced only when the same update marks it as
+# verified. When false, every change is synced. Either way Authsignal stores the value as verified.
 # + deleteUsers - Whether users deleted in WSO2 are deleted on Authsignal
 public type TenantConfig record {|
     string name;
@@ -36,6 +38,7 @@ public type TenantConfig record {|
     string userIdentifier = USER_ID;
     string primaryUserStore = "PRIMARY";
     boolean syncContactDetails = true;
+    boolean requireVerifiedContactDetails = true;
     boolean deleteUsers = true;
 |};
 

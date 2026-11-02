@@ -6,7 +6,7 @@ WSO2 Identity Server (7.2 or later) or Asgardeo. It receives the platform's
 
 | Webhook event        | Result in Authsignal                                                           |
 |----------------------|--------------------------------------------------------------------------------|
-| User profile updated | The verified email address and mobile number are set on the Authsignal user    |
+| User profile updated | The changed email address and mobile number are set as verified on the Authsignal user |
 | User deleted         | The Authsignal user and their authenticators are deleted                       |
 
 The service holds no state and never calls back into WSO2 IS or Asgardeo, so it needs no application or credentials
@@ -14,8 +14,8 @@ there. One deployment can serve several IS tenants or Asgardeo organisations.
 
 ## What is synced
 
-A profile update event carries only the claims that changed. The service syncs a value only when the same update also
-marks it as verified:
+A profile update event carries only the claims that changed. By default the service syncs a value only when the same
+update also marks it as verified:
 
 - **Email**: `http://wso2.org/claims/emailaddress` together with `http://wso2.org/claims/identity/emailVerified = true`.
 - **Mobile**: `http://wso2.org/claims/mobile` (E.164, for example `+94771234567`) together with
@@ -25,13 +25,19 @@ This is how the email and mobile verification flows write them. The values are s
 [Update User](https://docs.authsignal.com/api-reference/server-api/update-user) API marked as verified, which moves the
 user's email and SMS authenticators to the new values without an OTP.
 
+To sync changes that carry no verified flag, for example when the verified claims are not used, or an administrator
+edits an email address, set `requireVerifiedContactDetails = false` on the tenant. Every changed email and mobile is
+then synced, whatever its verified flag, and is still marked as verified on Authsignal. Only turn this off when the
+values in WSO2 can be trusted, since a user who can edit their own email or mobile would otherwise move their
+Authsignal email and SMS authenticators to an address or number they have not proven.
+
 The service first reads the user from Authsignal and writes only what differs, so redelivered events cause no further
 writes. Users with no authenticators on Authsignal are skipped.
 
 Not synced:
 
-- A changed value whose verified flag is not part of the same update, for example an administrator editing an email
-  address that was already verified.
+- With `requireVerifiedContactDetails = true`, a changed value whose verified flag is not part of the same update, for
+  example an administrator editing an email address that was already verified.
 - A verified flag that changes without the value.
 - Removed values.
 - Profile updates of tenants that identify users to Authsignal by username, since the profile update event does not
@@ -61,7 +67,8 @@ Each IS tenant or Asgardeo organisation is one `tenants` entry:
 | `authsignalSecretKey` | required | Authsignal Server API secret key. **Secret.** |
 | `userIdentifier` | `userId` | How users are identified to Authsignal: `userId` or `username`. Must match the connector's setting. |
 | `primaryUserStore` | `PRIMARY` | Primary user store name, left out of username-based IDs: `PRIMARY` on IS, `DEFAULT` on Asgardeo |
-| `syncContactDetails` | `true` | Sync verified email and mobile changes |
+| `syncContactDetails` | `true` | Sync email and mobile changes |
+| `requireVerifiedContactDetails` | `true` | Sync a change only when the same update marks it as verified. `false` syncs every change. Authsignal stores the value as verified either way. |
 | `deleteUsers` | `true` | Delete users on Authsignal when they are deleted in WSO2 |
 
 Service-wide settings: `port` (9090), `maxAttempts` (3, attempts per Authsignal call), `requestTimeout` (5 seconds).

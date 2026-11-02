@@ -20,7 +20,8 @@ import ballerina/log;
 const SIGNATURE_HEADER = "x-hub-signature";
 
 // Keeps Authsignal's users in step with WSO2 IS / Asgardeo, driven by the platform's webhooks:
-// - user profile updated: verified email and mobile are set on the Authsignal user
+// - user profile updated: changed email and mobile (by default, only verified ones) are set as verified on the
+//   Authsignal user
 // - user deleted: the Authsignal user and their authenticators are deleted
 //
 // Logs never carry email addresses, phone numbers or user IDs.
@@ -121,15 +122,15 @@ isolated function handleEvent(TenantConfig tenant, string eventType, json event)
     return deleteUser(tenant, payload, user);
 }
 
-// Set the verified email and mobile that a profile update proves on the Authsignal user.
+// Set the email and mobile that a profile update changed on the Authsignal user, marked as verified.
 isolated function syncContactDetails(TenantConfig tenant, UserEvent payload, EventUser user) returns error? {
 
     if !tenant.syncContactDetails {
         return;
     }
-    VerifiedContactDetails details = getVerifiedContactDetails(user);
+    VerifiedContactDetails details = getVerifiedContactDetails(user, tenant.requireVerifiedContactDetails);
     if details.email is () && details.phoneNumber is () {
-        log:printDebug("The profile update carries no verified email or mobile. Nothing to sync.",
+        log:printDebug("The profile update carries no email or mobile to sync.",
                 tenant = tenant.name);
         return;
     }
