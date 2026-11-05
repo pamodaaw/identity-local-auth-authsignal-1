@@ -64,7 +64,7 @@ The OSGi bundle is created at
 
    ```toml
    [[authentication.custom_authenticator]]
-   name = "AuthsignalAuthenticator"
+   name = "authsignal-authenticator"
    ```
 3. Configure Authsignal for each tenant (see below).
 4. In the Console, open the application > **Login Flow**. Add **Authsignal** as the **second** step, after a step that
@@ -116,7 +116,7 @@ retried.
 The sign-in authenticator supports [app-native authentication](https://is.docs.wso2.com/en/latest/references/app-native-authentication/)
 as a redirection prompt:
 
-1. When the Authsignal step is reached, the `/oauth2/authn` response lists `AuthsignalAuthenticator` with
+1. When the Authsignal step is reached, the `/oauth2/authn` response lists `authsignal-authenticator` with
    `promptType: REDIRECTION_PROMPT`, `requiredParams: ["challenge_token"]` and the pre-built UI URL in
    `metadata.additionalData.redirectUrl`.
 2. The application opens that URL in a browser (for example an in-app browser tab). Authsignal sends the user back to

@@ -221,7 +221,7 @@ public class AuthsignalAuthenticatorTest {
         assertEquals(captor.getValue().getRedirectUrl(), appRedirectUri);
 
         AuthenticatorData data = authenticator.getAuthInitiationData(context).orElseThrow();
-        assertEquals(data.getName(), "AuthsignalAuthenticator");
+        assertEquals(data.getName(), "authsignal-authenticator");
         assertEquals(data.getI18nKey(), "authenticator.authsignal");
         assertEquals(data.getPromptType(), FrameworkConstants.AuthenticatorPromptType.REDIRECTION_PROMPT);
         assertEquals(data.getRequiredParams(), Collections.singletonList("challenge_token"));

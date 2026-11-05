@@ -31,7 +31,7 @@ public class AuthsignalConstants {
 
     }
 
-    public static final String AUTHENTICATOR_NAME = "AuthsignalAuthenticator";
+    public static final String AUTHENTICATOR_NAME = "authsignal-authenticator";
     public static final String AUTHENTICATOR_FRIENDLY_NAME = "Authsignal";
     public static final String AUTHENTICATOR_I18N_KEY = "authenticator.authsignal";
     // Groups Authsignal with the other MFA options in the Console.
@@ -104,7 +104,8 @@ public class AuthsignalConstants {
 
         }
 
-        public static final String NAME = "authsignal-authenticator";
+        // Must match the authenticator name: the Console uses the authenticator ID as the connector ID.
+        public static final String NAME = AUTHENTICATOR_NAME;
         public static final String FRIENDLY_NAME = "Authsignal";
         public static final String CATEGORY = "Multi Factor Authenticators";
         public static final String SUB_CATEGORY = "DEFAULT";
