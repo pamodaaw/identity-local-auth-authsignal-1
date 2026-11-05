@@ -100,7 +100,7 @@ masks it in responses. Only send the properties you want to change; the others k
 |---|---|---|
 | `__secret__.Authsignal.SecretKey` | – (required) | Authsignal Server API key (Authsignal Portal > Settings > API keys). |
 | `Authsignal.Region` | `us` | Region of the Authsignal tenant: `us`, `eu`, `au`, `ca` or `uk`, which selects the API base URL (`https://api.authsignal.com/v1` or `https://<region>.api.authsignal.com/v1`). Match it to the API Host shown in the Authsignal Portal. Tenants pick a region rather than a URL, so the server only calls Authsignal's own hosts. |
-| `Authsignal.ActionCode` | `sign-in` | Action code of the Authsignal flow used at sign-in and in all registration, invited-user registration, password recovery and self-service flows. |
+| `Authsignal.ActionCode` | `sign-in` | Action code of the Authsignal flow used at sign-in and in all registration, invited-user registration and password recovery flows. |
 | `Authsignal.PasskeyEnrolledClaim` | _(empty)_ | URI of the local claim set to whether the user has a passkey on Authsignal, for example `http://wso2.org/claims/authsignalPasskeyEnrolled`. Not updated when empty. See [Passkey enrolled claim](#passkey-enrolled-claim). |
 
 Each Authsignal API call has a fixed 10 second timeout. It is not configurable, so that one tenant cannot hold server
@@ -172,23 +172,25 @@ self registration, invited-user registration and password recovery. It works wit
 
 During registration the WSO2 user does not exist yet. The executor starts the configured flow with the email address
 the user entered as `user.email` and the E.164 mobile number as `hints.phoneNumber` (or with the mobile number as
-`user.phoneNumber` if there is no email address), and keeps the returned `challengeId` in the flow context. This is
-the only value the executor keeps in the flow context; everything else is read again from the flow user and the node
-configuration when the user comes back. The user verifies the email address and phone number in the pre-built UI.
+`user.phoneNumber` if there is no email address). Nothing is kept in the flow context at this point; everything is read
+again from the flow user and the node configuration when the user comes back. The user verifies the email address and
+phone number in the pre-built UI.
 
-On return the executor verifies the flow and checks that a completed step of this flow verified the email address
-(or phone number) it started with: an `EMAIL_OTP` or `EMAIL_MAGIC_LINK` step for an email address, an `SMS` or
-`WHATSAPP` step for a phone number. A flow completed with only a passkey does not verify any contact detail. This also
-means a token from another sign-up cannot be replayed (ASIG-60008). Once the registration flow creates the user, the
-bundle's **`AuthsignalFlowExecutionListener`** calls Identify User (`POST /identify {userId, challengeId}`), which
-moves everything enrolled in the flow to the user's Authsignal user ID. Only when Identify User succeeds, the listener
-sets the email verified claim to `true` if the user has an `EMAIL_OTP` or `EMAIL_MAGIC_LINK` authenticator with the
-same email address as the user's own, and the phone verified claim to `true` if the user has an `SMS` or `WHATSAPP`
-authenticator with the same mobile number as the user's own. If the response has `action.completedSteps[]`, only the
-authenticators used in those steps (matched by `userAuthenticatorId`) are considered; Identify User returns none, so
-all the user's authenticators of those methods are considered. The passkey enrolled claim is set the same way, from
-`PASSKEY` authenticators. The email address and mobile number are never copied from Authsignal. If the registration
-is pending approval, the user is not created when the flow completes and is not linked.
+On return the executor verifies the flow and checks that a completed step of this flow verified the email address (or
+phone number) it started with: an `EMAIL_OTP` or `EMAIL_MAGIC_LINK` step for an email address, an `SMS` or `WHATSAPP`
+step for a phone number. A flow completed with only a passkey does not verify any contact detail. This also means a
+token from another sign-up cannot be replayed (ASIG-60008). The executor then keeps the `challengeId` of the verified
+flow in the flow context as `authsignalChallengeId`, the only value it keeps there. Once the registration flow creates
+the user, the bundle's **`AuthsignalFlowExecutionListener`** calls Identify User (`POST /identify {userId,
+challengeId}`), which moves everything enrolled in the flow to the user's Authsignal user ID. Only when Identify User
+succeeds, the listener sets the email verified claim to `true` if the user has an `EMAIL_OTP` or `EMAIL_MAGIC_LINK`
+authenticator with the same email address as the user's own, and the phone verified claim to `true` if the user has an
+`SMS` or `WHATSAPP` authenticator with the same mobile number as the user's own. If the response has
+`action.completedSteps[]`, only the authenticators used in those steps (matched by `userAuthenticatorId`) are
+considered; Identify User returns none, so all the user's authenticators of those methods are considered. The passkey
+enrolled claim is set the same way, from `PASSKEY` authenticators. The email address and mobile number are never copied
+from Authsignal. If the registration is pending approval, the user is not created when the flow completes and is not
+linked.
 
 ### Pending link
 
@@ -258,9 +260,11 @@ only `code` and `state`, and may also need to stop expecting a `code` in the cal
 
    Without it, the node uses `Authsignal.ActionCode`.
 
-In password recovery, only verifications with authenticators the user already had are accepted. If the
-flow enrolled a new authenticator, the recovery fails, as whoever started it could otherwise enrol their own. Unknown
-users get a generic error.
+In password recovery, the executor accepts any successful Authsignal flow of the user, including one where an
+authenticator was enrolled in the flow. Configure the Authsignal flow used for password recovery to only verify
+authenticators the user already has, and not to allow enrolment, as whoever starts the recovery could otherwise enrol
+their own authenticator and reset the user's password. Use a separate action code for that node (see above) if the
+default flow allows enrolment. Unknown users get a generic error.
 
 ## Troubleshooting
 
@@ -287,7 +291,7 @@ The authenticator reports these error codes:
 | ASIG-60012 | The tenant's `Authsignal.Region` is not one of `us`, `eu`, `au`, `ca`, `uk`. |
 | ASIG-60013 | The tenant's Authsignal configuration could not be read. |
 
-### Registration, password recovery and self-service flows
+### Registration and password recovery flows
 
 Like the other flow executors, the executor has no error codes of its own. The flow engine reports its errors as
 `FE-65013` (server errors) or `FE-60006` (user errors), and the error description tells the failure apart. Once the
@@ -304,7 +308,8 @@ username, email address or mobile number.
 | Error while resolving the Authsignal user ID for the user. | The Authsignal user ID of the user could not be resolved. |
 | The user could not be verified. | The user could not be found. Kept generic so that it does not reveal whether the user exists. |
 | Error while starting the flow on Authsignal. / Error while verifying the flow on Authsignal. | Start Flow / Verify Flow failed. Check the tenant's secret key, region, flow action codes and network egress. |
-| Authsignal did not return a challenge URL or challenge ID when starting the flow. | Start Flow returned an incomplete response. |
+| Authsignal did not return a challenge URL when starting the flow. | Start Flow returned an incomplete response. |
+| Authsignal did not return a challenge ID when verifying the flow. | Registration: Verify Flow returned no `challengeId`, so the user cannot be linked. |
 | The Authsignal challenge token is missing in the request. | The `challenge_token` is missing on return. Check that the portal forwards it. |
 | The Authsignal challenge was not completed successfully. | The user failed or abandoned the flow. |
 | The email address or mobile number verified on Authsignal does not match the one the challenge was started for. | Registration: the challenge token belongs to another registration. |

@@ -22,7 +22,6 @@ import org.apache.commons.lang.StringUtils;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.wso2.carbon.identity.central.log.mgt.utils.LogConstants;
-import org.wso2.carbon.identity.central.log.mgt.utils.LoggerUtils;
 import org.wso2.carbon.identity.core.util.IdentityUtil;
 import org.wso2.carbon.identity.flow.execution.engine.exception.FlowEngineException;
 import org.wso2.carbon.identity.flow.execution.engine.exception.FlowEngineServerException;
@@ -38,19 +37,20 @@ import org.wso2.carbon.identity.governance.IdentityGovernanceException;
 import org.wso2.carbon.identity.local.auth.authsignal.client.AuthsignalClient;
 import org.wso2.carbon.identity.local.auth.authsignal.constant.AuthsignalConstants;
 import org.wso2.carbon.identity.local.auth.authsignal.constant.AuthsignalConstants.ActionState;
-import org.wso2.carbon.identity.local.auth.authsignal.constant.AuthsignalConstants.ActionStepType;
 import org.wso2.carbon.identity.local.auth.authsignal.constant.AuthsignalConstants.ExecutorErrorMessages;
 import org.wso2.carbon.identity.local.auth.authsignal.constant.AuthsignalConstants.ExecutorMetadata;
 import org.wso2.carbon.identity.local.auth.authsignal.constant.AuthsignalConstants.FlowContextProps;
 import org.wso2.carbon.identity.local.auth.authsignal.constant.AuthsignalConstants.FlowType;
+import org.wso2.carbon.identity.local.auth.authsignal.constant.AuthsignalConstants.LogConstants.InputKeys;
+import org.wso2.carbon.identity.local.auth.authsignal.constant.AuthsignalConstants.LogConstants.Messages;
 import org.wso2.carbon.identity.local.auth.authsignal.constant.AuthsignalConstants.RequestParams;
 import org.wso2.carbon.identity.local.auth.authsignal.exception.AuthsignalConnectionException;
 import org.wso2.carbon.identity.local.auth.authsignal.model.AuthsignalConfig;
 import org.wso2.carbon.identity.local.auth.authsignal.model.AuthsignalRequest;
 import org.wso2.carbon.identity.local.auth.authsignal.model.AuthsignalResponse;
+import org.wso2.carbon.identity.local.auth.authsignal.util.AuthsignalDiagnosticLogUtil;
 import org.wso2.carbon.identity.local.auth.authsignal.util.AuthsignalUtil;
 import org.wso2.carbon.user.core.util.UserCoreUtil;
-import org.wso2.carbon.utils.DiagnosticLog;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -67,9 +67,8 @@ import static org.wso2.carbon.identity.flow.execution.engine.Constants.ExecutorS
 import static org.wso2.carbon.identity.flow.execution.engine.Constants.ExecutorStatus.STATUS_EXTERNAL_REDIRECTION;
 import static org.wso2.carbon.identity.flow.execution.engine.Constants.ExecutorStatus.STATUS_USER_ERROR;
 import static org.wso2.carbon.identity.flow.execution.engine.Constants.REDIRECT_URL;
-import static org.wso2.carbon.identity.local.auth.authsignal.constant.AuthsignalConstants.LogConstants.AUTHSIGNAL_SERVICE;
-import static org.wso2.carbon.identity.local.auth.authsignal.constant.AuthsignalConstants.LogConstants.ActionIDs.PROCESS_AUTHSIGNAL_FLOW_RESULT;
 import static org.wso2.carbon.identity.local.auth.authsignal.constant.AuthsignalConstants.LogConstants.ActionIDs.START_AUTHSIGNAL_FLOW;
+import static org.wso2.carbon.identity.local.auth.authsignal.constant.AuthsignalConstants.LogConstants.ActionIDs.VERIFY_AUTHSIGNAL_FLOW;
 
 /**
  * Flow executor that verifies the user with Authsignal.
@@ -93,7 +92,6 @@ public class AuthsignalExecutor implements Executor {
     @Override
     public Set<FlowTypes> getSupportedFlowTypes() {
 
-        // TODO: Add support for secured self-service operations once the flow type is available in the flow engine.
         return EnumSet.of(FlowTypes.REGISTRATION, FlowTypes.INVITED_USER_REGISTRATION, FlowTypes.PASSWORD_RECOVERY);
     }
 
@@ -146,6 +144,7 @@ public class AuthsignalExecutor implements Executor {
             throw serverException(ExecutorErrorMessages.READING_CONFIG, null, e);
         }
         if (StringUtils.isBlank(config.getSecretKey())) {
+            logFailure(START_AUTHSIGNAL_FLOW, context, null, ExecutorErrorMessages.SECRET_KEY_NOT_CONFIGURED, null);
             throw serverException(ExecutorErrorMessages.SECRET_KEY_NOT_CONFIGURED, null, null);
         }
 
@@ -157,26 +156,22 @@ public class AuthsignalExecutor implements Executor {
             case FlowType.REGISTRATION:
                 // The user does not exist yet, so use the contact details instead of a user ID.
                 if (!setContactDetails(startRequest, getFlowUser(context))) {
-                    triggerDiagnosticLog(START_AUTHSIGNAL_FLOW,
-                            ExecutorErrorMessages.CONTACT_DETAILS_NOT_FOUND.getMessage(),
-                            DiagnosticLog.ResultStatus.FAILED, context, actionCode);
+                    logFailure(START_AUTHSIGNAL_FLOW, context, actionCode,
+                            ExecutorErrorMessages.CONTACT_DETAILS_NOT_FOUND, null);
                     return userErrorResponse(ExecutorErrorMessages.CONTACT_DETAILS_NOT_FOUND, null);
                 }
                 break;
             case FlowType.INVITED_USER_REGISTRATION:
             case FlowType.PASSWORD_RECOVERY:
-            case FlowType.SECURED_SELF_SERVICE_OPERATIONS:
                 // The user already exists, and the WSO2 user ID is the Authsignal user ID.
                 authsignalUserId = localUserId(context);
                 if (authsignalUserId == null) {
-                    triggerDiagnosticLog(START_AUTHSIGNAL_FLOW, ExecutorErrorMessages.USER_NOT_IDENTIFIED.getMessage(),
-                            DiagnosticLog.ResultStatus.FAILED, context, actionCode);
                     return userErrorResponse(ExecutorErrorMessages.USER_NOT_IDENTIFIED, null);
                 }
                 startRequest.setUserId(authsignalUserId);
                 break;
             default:
-                throw unsupportedFlowType(flowType);
+                throw unsupportedFlowType(context);
         }
 
         AuthsignalResponse startResponse;
@@ -186,24 +181,19 @@ public class AuthsignalExecutor implements Executor {
             return handleConnectionFailure(ExecutorErrorMessages.START_FLOW_FAILED, authsignalUserId, e,
                     START_AUTHSIGNAL_FLOW, context, actionCode);
         }
-        if (StringUtils.isBlank(startResponse.getChallengeUrl())
-                || (FlowType.REGISTRATION.equals(flowType) && StringUtils.isBlank(startResponse.getChallengeId()))) {
+        AuthsignalDiagnosticLogUtil.triggerSuccessLog(START_AUTHSIGNAL_FLOW, Messages.FLOW_STARTED,
+                () -> logInputs(context, actionCode));
+        if (StringUtils.isBlank(startResponse.getChallengeUrl())) {
+            logFailure(START_AUTHSIGNAL_FLOW, context, actionCode, ExecutorErrorMessages.INVALID_START_FLOW_RESPONSE,
+                    null);
             throw serverException(ExecutorErrorMessages.INVALID_START_FLOW_RESPONSE, authsignalUserId, null);
         }
 
         ExecutorResponse response = newResponse(STATUS_EXTERNAL_REDIRECTION);
-        if (FlowType.REGISTRATION.equals(flowType)) {
-            // Used by the flow listener to link the Authsignal user to the WSO2 user once the user is created.
-            Map<String, Object> contextProperties = new HashMap<>();
-            contextProperties.put(FlowContextProps.CHALLENGE_ID, startResponse.getChallengeId());
-            response.setContextProperty(contextProperties);
-        }
         Map<String, String> additionalInfo = new HashMap<>();
         additionalInfo.put(REDIRECT_URL, startResponse.getChallengeUrl());
         response.setAdditionalInfo(additionalInfo);
         response.setRequiredData(Collections.singletonList(RequestParams.CHALLENGE_TOKEN));
-        triggerDiagnosticLog(START_AUTHSIGNAL_FLOW, "Redirecting the user to the Authsignal pre-built UI.",
-                DiagnosticLog.ResultStatus.SUCCESS, context, actionCode);
         return response;
     }
 
@@ -214,13 +204,9 @@ public class AuthsignalExecutor implements Executor {
 
         String flowType = context.getFlowType();
         String localUserId = localUserId(context);
-        // The challenge ID is kept only for a successful registration flow.
-        Object challengeId = removeProperty(context, FlowContextProps.CHALLENGE_ID);
 
         String challengeToken = context.getUserInputData().get(RequestParams.CHALLENGE_TOKEN);
         if (StringUtils.isBlank(challengeToken)) {
-            triggerDiagnosticLog(PROCESS_AUTHSIGNAL_FLOW_RESULT, ExecutorErrorMessages.MISSING_TOKEN.getMessage(),
-                    DiagnosticLog.ResultStatus.FAILED, context, null);
             return userErrorResponse(ExecutorErrorMessages.MISSING_TOKEN, localUserId);
         }
 
@@ -236,68 +222,66 @@ public class AuthsignalExecutor implements Executor {
             result = createClient(config).verifyFlow(actionCode, challengeToken);
         } catch (AuthsignalConnectionException e) {
             return handleConnectionFailure(ExecutorErrorMessages.VERIFY_FLOW_FAILED, localUserId, e,
-                    PROCESS_AUTHSIGNAL_FLOW_RESULT, context, actionCode);
+                    VERIFY_AUTHSIGNAL_FLOW, context, actionCode);
         }
-
+        AuthsignalDiagnosticLogUtil.triggerSuccessLog(VERIFY_AUTHSIGNAL_FLOW, Messages.FLOW_RESULT_RECEIVED,
+                () -> AuthsignalDiagnosticLogUtil.addFlowResult(logInputs(context, actionCode), result));
         if (!ActionState.CHALLENGE_SUCCEEDED.equals(result.getState())) {
             if (LOG.isDebugEnabled()) {
                 LOG.debug("Authsignal flow is in state: " + result.getState());
             }
-            if (LoggerUtils.isDiagnosticLogsEnabled()) {
-                LoggerUtils.triggerDiagnosticLogEvent(buildDiagnosticLog(PROCESS_AUTHSIGNAL_FLOW_RESULT,
-                        ExecutorErrorMessages.CHALLENGE_NOT_SUCCEEDED.getMessage(), DiagnosticLog.ResultStatus.FAILED,
-                        context, actionCode)
-                        .inputParam(AuthsignalConstants.LogConstants.InputKeys.FLOW_STATE, result.getState()));
-            }
+            logFailure(VERIFY_AUTHSIGNAL_FLOW, context, actionCode, ExecutorErrorMessages.CHALLENGE_NOT_SUCCEEDED,
+                    null);
             return userErrorResponse(ExecutorErrorMessages.CHALLENGE_NOT_SUCCEEDED, localUserId);
         }
 
         ExecutorResponse errorResponse;
         switch (StringUtils.defaultString(flowType)) {
             case FlowType.REGISTRATION:
-                errorResponse = processRegistrationResult(context, result, challengeId);
+                errorResponse = processRegistrationResult(context, result, actionCode);
                 break;
             case FlowType.INVITED_USER_REGISTRATION:
-                // The invited user sets up their authenticators in this flow.
-                errorResponse = processExistingUserResult(context, config, result, false);
-                break;
             case FlowType.PASSWORD_RECOVERY:
-            case FlowType.SECURED_SELF_SERVICE_OPERATIONS:
-                errorResponse = processExistingUserResult(context, config, result, true);
+                errorResponse = processExistingUserResult(context, config, result, actionCode);
                 break;
             default:
-                throw unsupportedFlowType(flowType);
+                throw unsupportedFlowType(context);
         }
         if (errorResponse != null) {
-            triggerDiagnosticLog(PROCESS_AUTHSIGNAL_FLOW_RESULT, errorResponse.getErrorMessage(),
-                    DiagnosticLog.ResultStatus.FAILED, context, actionCode);
             return errorResponse;
         }
 
         if (LOG.isDebugEnabled()) {
             LOG.debug("Authsignal flow: " + actionCode + " succeeded in flow type: " + flowType);
         }
-        triggerDiagnosticLog(PROCESS_AUTHSIGNAL_FLOW_RESULT, "Authsignal flow completed successfully.",
-                DiagnosticLog.ResultStatus.SUCCESS, context, actionCode);
+        AuthsignalDiagnosticLogUtil.triggerSuccessLog(VERIFY_AUTHSIGNAL_FLOW, Messages.VERIFICATION_COMPLETED,
+                () -> logInputs(context, actionCode));
         return newResponse(STATUS_COMPLETE);
     }
 
     /**
      * Check the result of a registration flow. The user has no Authsignal user ID yet, so the email address or phone
-     * number is matched instead. The verified contact details and the passkey status are saved once the listener
-     * links the user.
+     * number is matched instead. The challenge ID of the verified flow is kept, so that the flow listener can link
+     * the Authsignal user to the WSO2 user once the user is created. The verified contact details and the passkey
+     * status are saved once the listener links the user.
      *
      * @return An error response, or null if the result is accepted.
      */
     private static ExecutorResponse processRegistrationResult(FlowExecutionContext context, AuthsignalResponse result,
-                                                              Object challengeId) {
+                                                              String actionCode) throws FlowEngineServerException {
 
         if (!isVerifiedIdentifier(getIdentifier(getFlowUser(context)), result.getVerifiedEmail(),
-                result.getVerifiedPhoneNumber())
-                || !(challengeId instanceof String) || StringUtils.isBlank((String) challengeId)) {
+                result.getVerifiedPhoneNumber())) {
+            logFailure(VERIFY_AUTHSIGNAL_FLOW, context, actionCode, ExecutorErrorMessages.CONTACT_DETAILS_MISMATCH,
+                    null);
             return userErrorResponse(ExecutorErrorMessages.CONTACT_DETAILS_MISMATCH, null);
         }
-        context.setProperty(FlowContextProps.CHALLENGE_ID, challengeId);
+        if (StringUtils.isBlank(result.getChallengeId())) {
+            logFailure(VERIFY_AUTHSIGNAL_FLOW, context, actionCode, ExecutorErrorMessages.INVALID_VERIFY_FLOW_RESPONSE,
+                    null);
+            throw serverException(ExecutorErrorMessages.INVALID_VERIFY_FLOW_RESPONSE, null, null);
+        }
+        context.setProperty(FlowContextProps.CHALLENGE_ID, result.getChallengeId());
         return null;
     }
 
@@ -305,19 +289,16 @@ public class AuthsignalExecutor implements Executor {
      * Check the result of a flow of an existing user, who is already linked to Authsignal by the user ID, and save
      * the passkey status.
      *
-     * @param requireEnrolled Whether to accept only authenticators the user already had, not newly enrolled ones.
      * @return An error response, or null if the result is accepted.
      */
     private static ExecutorResponse processExistingUserResult(FlowExecutionContext context, AuthsignalConfig config,
-                                                              AuthsignalResponse result, boolean requireEnrolled) {
+                                                              AuthsignalResponse result, String actionCode) {
 
         String localUserId = localUserId(context);
         String verifiedUserId = result.getUser() != null ? result.getUser().getUserId() : null;
         if (localUserId == null || !StringUtils.equals(localUserId, verifiedUserId)) {
+            logFailure(VERIFY_AUTHSIGNAL_FLOW, context, actionCode, ExecutorErrorMessages.USER_MISMATCH, null);
             return userErrorResponse(ExecutorErrorMessages.USER_MISMATCH, localUserId);
-        }
-        if (requireEnrolled && !isVerifiedWithEnrolledAuthenticators(result)) {
-            return userErrorResponse(ExecutorErrorMessages.USER_NOT_ENROLLED, localUserId);
         }
         FlowUser flowUser = getFlowUser(context);
         String username = StringUtils.trimToNull(flowUser.getUsername());
@@ -361,23 +342,6 @@ public class AuthsignalExecutor implements Executor {
             return false;
         }
         return identifier.equalsIgnoreCase(verifiedEmail) || identifier.equals(verifiedMobile);
-    }
-
-    /**
-     * Check that every completed step used an authenticator the user already had.
-     */
-    private static boolean isVerifiedWithEnrolledAuthenticators(AuthsignalResponse result) {
-
-        List<AuthsignalResponse.Step> steps = result.getAction().getCompletedSteps();
-        if (steps.isEmpty()) {
-            return false;
-        }
-        for (AuthsignalResponse.Step step : steps) {
-            if (!ActionStepType.VERIFICATION_REQUIRED.equals(step.getStepType())) {
-                return false;
-            }
-        }
-        return true;
     }
 
     /**
@@ -450,43 +414,33 @@ public class AuthsignalExecutor implements Executor {
         return context.getFlowUser() != null ? context.getFlowUser() : new FlowUser();
     }
 
-    private static void triggerDiagnosticLog(String actionId, String message, DiagnosticLog.ResultStatus status,
-                                             FlowExecutionContext context, String actionCode) {
+    /**
+     * Get the inputs of a flow diagnostic log: the flow type, the application, the action code and the user ID.
+     */
+    private static Map<String, Object> logInputs(FlowExecutionContext context, String actionCode) {
 
-        if (LoggerUtils.isDiagnosticLogsEnabled()) {
-            LoggerUtils.triggerDiagnosticLogEvent(buildDiagnosticLog(actionId, message, status, context, actionCode));
-        }
+        Map<String, Object> inputs = AuthsignalDiagnosticLogUtil.commonInputs(actionCode, localUserId(context));
+        AuthsignalDiagnosticLogUtil.putIfNotNull(inputs, InputKeys.FLOW_TYPE, context.getFlowType());
+        AuthsignalDiagnosticLogUtil.putIfNotNull(inputs, LogConstants.InputKeys.APPLICATION_ID,
+                StringUtils.trimToNull(context.getApplicationId()));
+        return inputs;
     }
 
     /**
-     * Build a diagnostic log of the flow. Only the user ID is added to identify the user, as the other user details
-     * are personal data.
+     * Trigger the diagnostic log of a failure, with the HTTP status if an Authsignal call failed.
      */
-    private static DiagnosticLog.DiagnosticLogBuilder buildDiagnosticLog(String actionId, String message,
-                                                                         DiagnosticLog.ResultStatus status,
-                                                                         FlowExecutionContext context,
-                                                                         String actionCode) {
+    private static void logFailure(String actionId, FlowExecutionContext context, String actionCode,
+                                   ExecutorErrorMessages error, Throwable cause) {
 
-        DiagnosticLog.DiagnosticLogBuilder diagnosticLogBuilder =
-                new DiagnosticLog.DiagnosticLogBuilder(AUTHSIGNAL_SERVICE, actionId);
-        diagnosticLogBuilder.resultMessage(message)
-                .logDetailLevel(DiagnosticLog.LogDetailLevel.APPLICATION)
-                .resultStatus(status)
-                .inputParam(AuthsignalConstants.LogConstants.InputKeys.FLOW_TYPE, context.getFlowType());
-        if (actionCode != null) {
-            diagnosticLogBuilder.inputParam(AuthsignalConstants.LogConstants.InputKeys.ACTION_CODE, actionCode);
-        }
-        String userId = localUserId(context);
-        if (userId != null) {
-            diagnosticLogBuilder.inputParam(LogConstants.InputKeys.USER_ID, userId);
-        }
-        return diagnosticLogBuilder;
+        AuthsignalDiagnosticLogUtil.triggerFailureLog(actionId, error.getMessage(), cause,
+                () -> logInputs(context, actionCode));
     }
 
-    private static FlowEngineServerException unsupportedFlowType(String flowType) {
+    private static FlowEngineServerException unsupportedFlowType(FlowExecutionContext context) {
 
-        return serverException(String.format(ExecutorErrorMessages.UNSUPPORTED_FLOW_TYPE.getMessage(), flowType),
-                null);
+        String message = String.format(ExecutorErrorMessages.UNSUPPORTED_FLOW_TYPE.getMessage(),
+                context.getFlowType());
+        return serverException(message, null);
     }
 
     /**
@@ -496,11 +450,6 @@ public class AuthsignalExecutor implements Executor {
     private static boolean isRejected(AuthsignalConnectionException e) {
 
         return e.isClientError() && !e.isTransient();
-    }
-
-    private static Object removeProperty(FlowExecutionContext context, String property) {
-
-        return context.getProperties() != null ? context.getProperties().remove(property) : null;
     }
 
     private static ExecutorResponse newResponse(String status) {
@@ -523,14 +472,15 @@ public class AuthsignalExecutor implements Executor {
     }
 
     /**
-     * Report a failed Authsignal call as a user error if Authsignal rejected the request, or else as a server error.
+     * Log a failed Authsignal call and report it as a user error if Authsignal rejected the request, or else as a
+     * server error.
      */
     private static ExecutorResponse handleConnectionFailure(ExecutorErrorMessages error, String userId,
                                                             AuthsignalConnectionException e, String actionId,
                                                             FlowExecutionContext context, String actionCode)
             throws FlowEngineServerException {
 
-        triggerDiagnosticLog(actionId, error.getMessage(), DiagnosticLog.ResultStatus.FAILED, context, actionCode);
+        logFailure(actionId, context, actionCode, error, e);
         if (isRejected(e)) {
             if (LOG.isDebugEnabled()) {
                 LOG.debug("Authsignal rejected the request with HTTP " + e.getStatusCode() + ".", e);

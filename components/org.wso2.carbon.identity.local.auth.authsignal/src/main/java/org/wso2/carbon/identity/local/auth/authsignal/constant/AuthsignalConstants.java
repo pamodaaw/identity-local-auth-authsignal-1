@@ -61,7 +61,7 @@ public class AuthsignalConstants {
 
         }
 
-        public static final String AUTHSIGNAL_SERVICE = "local-auth-authsignal";
+        public static final String AUTHSIGNAL_SERVICE = "authsignal-service";
 
         /**
          * Action IDs of the diagnostic logs.
@@ -72,11 +72,9 @@ public class AuthsignalConstants {
 
             }
 
-            public static final String INITIATE_AUTHSIGNAL_REQUEST = "initiate-authsignal-authentication-request";
-            public static final String PROCESS_AUTHENTICATION_RESPONSE =
-                    "process-authsignal-authentication-response";
+            // One action ID per Authsignal API, shared by sign-in and the flows built in the Console.
             public static final String START_AUTHSIGNAL_FLOW = "start-authsignal-flow";
-            public static final String PROCESS_AUTHSIGNAL_FLOW_RESULT = "process-authsignal-flow-result";
+            public static final String VERIFY_AUTHSIGNAL_FLOW = "verify-authsignal-flow";
             public static final String LINK_AUTHSIGNAL_USER = "link-authsignal-user";
         }
 
@@ -92,6 +90,33 @@ public class AuthsignalConstants {
             public static final String ACTION_CODE = "action code";
             public static final String FLOW_TYPE = "flow type";
             public static final String FLOW_STATE = "flow state";
+            public static final String VERIFICATION_METHODS = "verification methods";
+            public static final String UPDATED_CLAIMS = "updated claims";
+            public static final String STATUS_CODE = "authsignal status code";
+        }
+
+        /**
+         * Result messages of the diagnostic logs, shared by sign-in and the flows built in the Console. Failures
+         * of the sign-in and the flow executor are logged with the message of their error.
+         */
+        public static class Messages {
+
+            private Messages() {
+
+            }
+
+            public static final String FLOW_STARTED = "Started the flow on Authsignal.";
+            public static final String FLOW_RESULT_RECEIVED = "Received the flow result from Authsignal.";
+            public static final String VERIFICATION_COMPLETED = "Authsignal verification completed successfully.";
+            public static final String USER_LINKED = "Linked the Authsignal user to the WSO2 user.";
+            public static final String LINK_FAILED = "Failed to link the Authsignal user to the WSO2 user.";
+            public static final String LINK_FAILED_RETRIED = "Failed to link the Authsignal user to the WSO2 user. "
+                    + "The link will be retried at the user's next sign-in.";
+            public static final String LINK_FAILED_NOT_RETRIED = "Failed to link the Authsignal user to the WSO2 "
+                    + "user. The link is not retried.";
+            public static final String SAVING_LINK_FAILED = "Failed to save the Authsignal link on the WSO2 user.";
+            public static final String USER_NOT_CREATED = "The user registered with Authsignal is not created. The "
+                    + "Authsignal user is not linked to a WSO2 user.";
         }
     }
 
@@ -157,8 +182,8 @@ public class AuthsignalConstants {
 
         }
 
-        // Challenge ID of the registration flow, used to link the Authsignal user to the new WSO2 user.
-        public static final String CHALLENGE_ID = "authsignal.flow.challengeId";
+        // Challenge ID of the verified registration flow, used to link the Authsignal user to the new WSO2 user.
+        public static final String CHALLENGE_ID = "authsignalChallengeId";
     }
 
     /**
@@ -186,8 +211,6 @@ public class AuthsignalConstants {
         public static final String REGISTRATION = "REGISTRATION";
         public static final String INVITED_USER_REGISTRATION = "INVITED_USER_REGISTRATION";
         public static final String PASSWORD_RECOVERY = "PASSWORD_RECOVERY";
-        // Self-service operations that need verification, such as profile update.
-        public static final String SECURED_SELF_SERVICE_OPERATIONS = "SECURED_SELF_SERVICE_OPERATIONS";
     }
 
     /**
@@ -245,18 +268,6 @@ public class AuthsignalConstants {
         }
 
         public static final String CHALLENGE_SUCCEEDED = "CHALLENGE_SUCCEEDED";
-    }
-
-    /**
-     * Types of the steps completed in an Authsignal flow.
-     */
-    public static class ActionStepType {
-
-        private ActionStepType() {
-
-        }
-
-        public static final String VERIFICATION_REQUIRED = "VERIFICATION_REQUIRED";
     }
 
     /**
@@ -346,15 +357,14 @@ public class AuthsignalConstants {
         // Kept generic so that it does not reveal whether the user exists.
         USER_NOT_IDENTIFIED("The user could not be verified."),
         START_FLOW_FAILED("Error while starting the flow on Authsignal."),
-        INVALID_START_FLOW_RESPONSE("Authsignal did not return a challenge URL or challenge ID when starting the " +
-                "flow."),
+        INVALID_START_FLOW_RESPONSE("Authsignal did not return a challenge URL when starting the flow."),
         MISSING_TOKEN("The Authsignal challenge token is missing in the request."),
         VERIFY_FLOW_FAILED("Error while verifying the flow on Authsignal."),
+        INVALID_VERIFY_FLOW_RESPONSE("Authsignal did not return a challenge ID when verifying the flow."),
         CHALLENGE_NOT_SUCCEEDED("The Authsignal challenge was not completed successfully."),
         CONTACT_DETAILS_MISMATCH("The email address or mobile number verified on Authsignal does not match the one " +
                 "the challenge was started for."),
-        USER_MISMATCH("The user verified on Authsignal does not match the user the challenge was started for."),
-        USER_NOT_ENROLLED("The user was verified with an authenticator that was not enrolled before the flow.");
+        USER_MISMATCH("The user verified on Authsignal does not match the user the challenge was started for.");
 
         private final String message;
 

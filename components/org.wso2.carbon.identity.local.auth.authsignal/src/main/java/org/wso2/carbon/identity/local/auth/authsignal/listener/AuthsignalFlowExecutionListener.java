@@ -22,7 +22,6 @@ import org.apache.commons.lang.StringUtils;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.wso2.carbon.identity.central.log.mgt.utils.LogConstants;
-import org.wso2.carbon.identity.central.log.mgt.utils.LoggerUtils;
 import org.wso2.carbon.identity.core.util.IdentityUtil;
 import org.wso2.carbon.identity.flow.execution.engine.listener.AbstractFlowExecutionListener;
 import org.wso2.carbon.identity.flow.execution.engine.model.FlowExecutionContext;
@@ -33,19 +32,20 @@ import org.wso2.carbon.identity.local.auth.authsignal.client.AuthsignalClient;
 import org.wso2.carbon.identity.local.auth.authsignal.constant.AuthsignalConstants;
 import org.wso2.carbon.identity.local.auth.authsignal.constant.AuthsignalConstants.FlowContextProps;
 import org.wso2.carbon.identity.local.auth.authsignal.constant.AuthsignalConstants.FlowType;
+import org.wso2.carbon.identity.local.auth.authsignal.constant.AuthsignalConstants.LogConstants.InputKeys;
+import org.wso2.carbon.identity.local.auth.authsignal.constant.AuthsignalConstants.LogConstants.Messages;
 import org.wso2.carbon.identity.local.auth.authsignal.exception.AuthsignalConnectionException;
 import org.wso2.carbon.identity.local.auth.authsignal.executor.AuthsignalExecutor;
 import org.wso2.carbon.identity.local.auth.authsignal.model.AuthsignalConfig;
+import org.wso2.carbon.identity.local.auth.authsignal.util.AuthsignalDiagnosticLogUtil;
 import org.wso2.carbon.identity.local.auth.authsignal.util.AuthsignalUtil;
 import org.wso2.carbon.user.api.UserStoreException;
 import org.wso2.carbon.user.core.util.UserCoreUtil;
-import org.wso2.carbon.utils.DiagnosticLog;
 
 import java.util.HashMap;
 import java.util.Map;
 
 import static org.wso2.carbon.identity.flow.execution.engine.Constants.STATUS_COMPLETE;
-import static org.wso2.carbon.identity.local.auth.authsignal.constant.AuthsignalConstants.LogConstants.AUTHSIGNAL_SERVICE;
 import static org.wso2.carbon.identity.local.auth.authsignal.constant.AuthsignalConstants.LogConstants.ActionIDs.LINK_AUTHSIGNAL_USER;
 
 /**
@@ -103,8 +103,8 @@ public class AuthsignalFlowExecutionListener extends AbstractFlowExecutionListen
             // For example, the registration is pending approval and the user is not created yet.
             LOG.warn("The user registered with Authsignal is not created in the tenant: " + tenantDomain
                     + ". The Authsignal user is not linked to a WSO2 user.");
-            triggerDiagnosticLog("The user registered with Authsignal is not created. The Authsignal user is not "
-                    + "linked to a WSO2 user.", DiagnosticLog.ResultStatus.FAILED, null);
+            AuthsignalDiagnosticLogUtil.triggerFailureLog(LINK_AUTHSIGNAL_USER, Messages.USER_NOT_CREATED, null,
+                    () -> logInputs(context, null));
             return;
         }
         String username = IdentityUtil.addDomainToName(getUsername(flowUser), flowUser.getUserStoreDomain());
@@ -120,16 +120,18 @@ public class AuthsignalFlowExecutionListener extends AbstractFlowExecutionListen
                     LOG.debug("Linked the Authsignal user registered in the flow: "
                             + context.getContextIdentifier() + " to the WSO2 user.");
                 }
-                triggerDiagnosticLog("Linked the Authsignal user to the WSO2 user.",
-                        DiagnosticLog.ResultStatus.SUCCESS, flowUser.getUserId());
+                Map<String, String> linkedClaims = claims;
+                AuthsignalDiagnosticLogUtil.triggerSuccessLog(LINK_AUTHSIGNAL_USER, Messages.USER_LINKED,
+                        () -> AuthsignalDiagnosticLogUtil.addUpdatedClaims(
+                                logInputs(context, flowUser.getUserId()), linkedClaims));
             } catch (AuthsignalConnectionException e) {
                 if (!e.isTransient()) {
                     // For example, the challenge has expired or Authsignal is not configured, so do not retry it.
                     LOG.error("Failed to link the Authsignal user registered in the flow: "
                             + context.getContextIdentifier() + " to the WSO2 user in the tenant: " + tenantDomain
                             + ". The link is not retried.", e);
-                    triggerDiagnosticLog("Failed to link the Authsignal user to the WSO2 user. The link is not "
-                            + "retried.", DiagnosticLog.ResultStatus.FAILED, flowUser.getUserId());
+                    AuthsignalDiagnosticLogUtil.triggerFailureLog(LINK_AUTHSIGNAL_USER,
+                            Messages.LINK_FAILED_NOT_RETRIED, e, () -> logInputs(context, flowUser.getUserId()));
                     return;
                 }
                 // Finished at the user's next sign-in.
@@ -138,9 +140,8 @@ public class AuthsignalFlowExecutionListener extends AbstractFlowExecutionListen
                 LOG.warn("Failed to link the Authsignal user registered in the flow: "
                         + context.getContextIdentifier() + " in the tenant: " + tenantDomain
                         + ". The link will be completed at the user's next sign-in.");
-                triggerDiagnosticLog("Failed to link the Authsignal user to the WSO2 user. The link will be "
-                        + "completed at the user's next sign-in.", DiagnosticLog.ResultStatus.FAILED,
-                        flowUser.getUserId());
+                AuthsignalDiagnosticLogUtil.triggerFailureLog(LINK_AUTHSIGNAL_USER, Messages.LINK_FAILED_RETRIED, e,
+                        () -> logInputs(context, flowUser.getUserId()));
             }
             if (!claims.isEmpty()) {
                 AuthsignalUtil.setUserClaims(tenantDomain, username, claims);
@@ -148,6 +149,8 @@ public class AuthsignalFlowExecutionListener extends AbstractFlowExecutionListen
         } catch (IdentityGovernanceException | UserStoreException | RuntimeException e) {
             LOG.error("Failed to save the Authsignal registration of the flow: " + context.getContextIdentifier()
                     + " on the WSO2 user in the tenant: " + tenantDomain + ".", e);
+            AuthsignalDiagnosticLogUtil.triggerFailureLog(LINK_AUTHSIGNAL_USER, Messages.SAVING_LINK_FAILED, e,
+                    () -> logInputs(context, flowUser.getUserId()));
         }
     }
 
@@ -161,20 +164,16 @@ public class AuthsignalFlowExecutionListener extends AbstractFlowExecutionListen
         return new AuthsignalClient(config);
     }
 
-    private static void triggerDiagnosticLog(String message, DiagnosticLog.ResultStatus status, String userId) {
+    /**
+     * Get the inputs of a diagnostic log of the registration: the flow type, the application and the user ID.
+     */
+    private static Map<String, Object> logInputs(FlowExecutionContext context, String userId) {
 
-        if (!LoggerUtils.isDiagnosticLogsEnabled()) {
-            return;
-        }
-        DiagnosticLog.DiagnosticLogBuilder diagnosticLogBuilder =
-                new DiagnosticLog.DiagnosticLogBuilder(AUTHSIGNAL_SERVICE, LINK_AUTHSIGNAL_USER);
-        diagnosticLogBuilder.resultMessage(message)
-                .logDetailLevel(DiagnosticLog.LogDetailLevel.APPLICATION)
-                .resultStatus(status);
-        if (userId != null) {
-            diagnosticLogBuilder.inputParam(LogConstants.InputKeys.USER_ID, userId);
-        }
-        LoggerUtils.triggerDiagnosticLogEvent(diagnosticLogBuilder);
+        Map<String, Object> inputs = AuthsignalDiagnosticLogUtil.commonInputs(null, userId);
+        AuthsignalDiagnosticLogUtil.putIfNotNull(inputs, InputKeys.FLOW_TYPE, context.getFlowType());
+        AuthsignalDiagnosticLogUtil.putIfNotNull(inputs, LogConstants.InputKeys.APPLICATION_ID,
+                StringUtils.trimToNull(context.getApplicationId()));
+        return inputs;
     }
 
     private static String getUsername(FlowUser flowUser) {

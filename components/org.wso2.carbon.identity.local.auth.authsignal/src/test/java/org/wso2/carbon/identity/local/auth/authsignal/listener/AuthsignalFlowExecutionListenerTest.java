@@ -22,6 +22,7 @@ import org.mockito.MockedStatic;
 import org.testng.annotations.AfterMethod;
 import org.testng.annotations.BeforeMethod;
 import org.testng.annotations.Test;
+import org.wso2.carbon.identity.central.log.mgt.utils.LogConstants;
 import org.wso2.carbon.identity.central.log.mgt.utils.LoggerUtils;
 import org.wso2.carbon.identity.flow.execution.engine.model.FlowExecutionContext;
 import org.wso2.carbon.identity.flow.execution.engine.model.FlowExecutionStep;
@@ -35,6 +36,7 @@ import org.wso2.carbon.identity.local.auth.authsignal.exception.AuthsignalConnec
 import org.wso2.carbon.identity.local.auth.authsignal.model.AuthsignalConfig;
 import org.wso2.carbon.identity.local.auth.authsignal.model.AuthsignalResponse;
 import org.wso2.carbon.identity.local.auth.authsignal.util.ClaimUpdateRecorder;
+import org.wso2.carbon.identity.local.auth.authsignal.util.DiagnosticLogRecorder;
 import org.wso2.carbon.user.api.UserStoreException;
 
 import java.util.ArrayList;
@@ -67,16 +69,16 @@ public class AuthsignalFlowExecutionListenerTest {
     private static final String MOBILE = "+94771234567";
     private static final String PASSKEY_CLAIM = "http://wso2.org/claims/authsignalPasskeyEnrolled";
 
-    private MockedStatic<LoggerUtils> loggerUtils;
     private AuthsignalClient client;
     private Map<String, String> tenantProperties;
     private TestableListener listener;
     private ClaimUpdateRecorder claimUpdates;
+    private MockedStatic<LoggerUtils> loggerUtils;
 
     @BeforeMethod
     public void setUp() {
 
-        // Diagnostic logs are disabled, as they need a running server.
+        // Diagnostic logs are disabled unless a test records them, as they need a running server.
         loggerUtils = mockStatic(LoggerUtils.class);
         client = mock(AuthsignalClient.class);
         tenantProperties = new HashMap<>();
@@ -89,8 +91,8 @@ public class AuthsignalFlowExecutionListenerTest {
     @AfterMethod
     public void tearDown() {
 
-        loggerUtils.close();
         claimUpdates.close();
+        loggerUtils.close();
     }
 
     @Test
@@ -304,6 +306,86 @@ public class AuthsignalFlowExecutionListenerTest {
         assertTrue(listener.doPostExecute(step("COMPLETE"), registrationContext()));
         verify(client, never()).identifyUser(anyString(), anyString());
         assertNull(claimUpdates.getClaims(), "A configuration error is not retried at sign-in");
+    }
+
+    @Test
+    public void testLinkIsLogged() throws Exception {
+
+        DiagnosticLogRecorder diagnosticLogs = DiagnosticLogRecorder.start(loggerUtils);
+        FlowExecutionContext context = withContactDetails(registrationContext(), EMAIL, null);
+        context.setApplicationId("app-1");
+        when(client.identifyUser(USER_UUID, "challenge-1")).thenReturn(identified(
+                authenticator("EMAIL_OTP", EMAIL, null)));
+
+        listener.doPostExecute(step("COMPLETE"), context);
+
+        assertEquals(diagnosticLogs.getLogs(), Collections.singletonList(
+                "link-authsignal-user | SUCCESS: Linked the Authsignal user to the WSO2 user."));
+        assertEquals(diagnosticLogs.getComponentIds(), Collections.singletonList("authsignal-service"));
+        Map<String, Object> inputs = diagnosticLogs.getInputs("Linked the Authsignal user to the WSO2 user.");
+        assertEquals(inputs.get("flow type"), FlowType.REGISTRATION);
+        assertEquals(inputs.get(LogConstants.InputKeys.APPLICATION_ID), "app-1");
+        assertEquals(inputs.get(LogConstants.InputKeys.USER_ID), USER_UUID);
+        Map<String, String> updatedClaims = new HashMap<>();
+        updatedClaims.put(AuthsignalConstants.EMAIL_VERIFIED_CLAIM, "true");
+        updatedClaims.put(PASSKEY_CLAIM, "false");
+        assertEquals(inputs.get("updated claims"), updatedClaims);
+        assertFalse(inputs.toString().contains(EMAIL), "Personal data must not be logged");
+    }
+
+    @Test
+    public void testLinkFailureIsLogged() throws Exception {
+
+        DiagnosticLogRecorder diagnosticLogs = DiagnosticLogRecorder.start(loggerUtils);
+        when(client.identifyUser(anyString(), anyString())).thenThrow(new AuthsignalConnectionException("down", 503));
+
+        listener.doPostExecute(step("COMPLETE"), registrationContext());
+
+        String message = "Failed to link the Authsignal user to the WSO2 user. The link will be retried at the "
+                + "user's next sign-in.";
+        assertEquals(diagnosticLogs.getLogs(),
+                Collections.singletonList("link-authsignal-user | FAILED: " + message));
+        assertEquals(diagnosticLogs.getInputs(message).get("authsignal status code"), 503);
+    }
+
+    @Test
+    public void testFailureBeforeLinkIsLogged() throws Exception {
+
+        DiagnosticLogRecorder diagnosticLogs = DiagnosticLogRecorder.start(loggerUtils);
+        tenantProperties.remove(ConnectorConfig.SECRET_KEY);
+
+        listener.doPostExecute(step("COMPLETE"), registrationContext());
+
+        assertEquals(diagnosticLogs.getLogs(), Collections.singletonList("link-authsignal-user | FAILED: Failed to "
+                + "link the Authsignal user to the WSO2 user. The link is not retried."));
+    }
+
+    @Test
+    public void testUserNotCreatedIsLogged() throws Exception {
+
+        DiagnosticLogRecorder diagnosticLogs = DiagnosticLogRecorder.start(loggerUtils);
+        FlowExecutionContext context = registrationContext();
+        context.getFlowUser().setUserId(null);
+
+        listener.doPostExecute(step("COMPLETE"), context);
+
+        assertEquals(diagnosticLogs.getLogs(), Collections.singletonList("link-authsignal-user | FAILED: The user "
+                + "registered with Authsignal is not created. The Authsignal user is not linked to a WSO2 user."));
+    }
+
+    @Test
+    public void testFailureAfterLinkIsLogged() throws Exception {
+
+        DiagnosticLogRecorder diagnosticLogs = DiagnosticLogRecorder.start(loggerUtils);
+        when(client.identifyUser(USER_UUID, "challenge-1")).thenReturn(identified(
+                authenticator("PASSKEY", null, null)));
+        claimUpdates.failWith(new UserStoreException("store down"));
+
+        listener.doPostExecute(step("COMPLETE"), registrationContext());
+
+        assertEquals(diagnosticLogs.getLogs(), Arrays.asList(
+                "link-authsignal-user | SUCCESS: Linked the Authsignal user to the WSO2 user.",
+                "link-authsignal-user | FAILED: Failed to save the Authsignal link on the WSO2 user."));
     }
 
     private static FlowExecutionStep step(String status) {

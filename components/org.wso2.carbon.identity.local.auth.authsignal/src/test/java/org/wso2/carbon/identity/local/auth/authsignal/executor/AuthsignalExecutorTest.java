@@ -23,6 +23,7 @@ import org.mockito.MockedStatic;
 import org.testng.annotations.AfterMethod;
 import org.testng.annotations.BeforeMethod;
 import org.testng.annotations.Test;
+import org.wso2.carbon.identity.central.log.mgt.utils.LogConstants;
 import org.wso2.carbon.identity.central.log.mgt.utils.LoggerUtils;
 import org.wso2.carbon.identity.flow.execution.engine.exception.FlowEngineException;
 import org.wso2.carbon.identity.flow.execution.engine.exception.FlowEngineServerException;
@@ -45,9 +46,11 @@ import org.wso2.carbon.identity.local.auth.authsignal.model.AuthsignalConfig;
 import org.wso2.carbon.identity.local.auth.authsignal.model.AuthsignalRequest;
 import org.wso2.carbon.identity.local.auth.authsignal.model.AuthsignalResponse;
 import org.wso2.carbon.identity.local.auth.authsignal.util.ClaimUpdateRecorder;
+import org.wso2.carbon.identity.local.auth.authsignal.util.DiagnosticLogRecorder;
 import org.wso2.carbon.user.api.UserStoreException;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -80,23 +83,23 @@ public class AuthsignalExecutorTest {
     private static final String MOBILE = "+94770000000";
     private static final String PASSKEY_CLAIM = "http://wso2.org/claims/authsignalPasskeyEnrolled";
 
-    private MockedStatic<LoggerUtils> loggerUtils;
     private AuthsignalClient client;
     private Map<String, String> tenantProperties;
     private ClaimUpdateRecorder claimUpdates;
     private TestableExecutor executor;
+    private MockedStatic<LoggerUtils> loggerUtils;
 
     @AfterMethod
     public void tearDown() {
 
-        loggerUtils.close();
         claimUpdates.close();
+        loggerUtils.close();
     }
 
     @BeforeMethod
     public void setUp() {
 
-        // Diagnostic logs are disabled, as they need a running server.
+        // Diagnostic logs are disabled unless a test records them, as they need a running server.
         loggerUtils = mockStatic(LoggerUtils.class);
         client = mock(AuthsignalClient.class);
         tenantProperties = new HashMap<>();
@@ -118,12 +121,6 @@ public class AuthsignalExecutorTest {
         assertTrue(executor.getSupportedFlowTypes().contains(FlowTypes.REGISTRATION));
         assertTrue(executor.getSupportedFlowTypes().contains(FlowTypes.PASSWORD_RECOVERY));
         assertTrue(executor.getSupportedFlowTypes().contains(FlowTypes.INVITED_USER_REGISTRATION));
-        // Supported once the framework defines the flow type.
-        for (FlowTypes flowType : FlowTypes.values()) {
-            if (FlowType.SECURED_SELF_SERVICE_OPERATIONS.equals(flowType.name())) {
-                assertTrue(executor.getSupportedFlowTypes().contains(flowType));
-            }
-        }
         assertTrue(executor.getInitiationData().isEmpty());
     }
 
@@ -146,8 +143,8 @@ public class AuthsignalExecutorTest {
         assertEquals(request.getUserEmail(), EMAIL);
         assertNull(request.getUserPhoneNumber(), "Authsignal takes one user identifier only");
         assertEquals(request.getHintPhoneNumber(), MOBILE);
-        assertEquals(response.getContextProperties(),
-                Collections.singletonMap(FlowContextProps.CHALLENGE_ID, "challenge-1"));
+        assertTrue(response.getContextProperties() == null || response.getContextProperties().isEmpty(),
+                "Nothing is kept in the flow context until the flow is verified");
         assertEquals(request.getRedirectUrl(), PORTAL_URL);
     }
 
@@ -185,10 +182,10 @@ public class AuthsignalExecutorTest {
     }
 
     @Test
-    public void testRegistrationWithoutChallengeIdFails() throws Exception {
+    public void testRegistrationWithoutChallengeUrlFails() throws Exception {
 
         AuthsignalResponse startResponse = started();
-        startResponse.setChallengeId(null);
+        startResponse.setChallengeUrl(null);
         when(client.startFlow(any())).thenReturn(startResponse);
 
         assertServerError(registrationContext(EMAIL, MOBILE),
@@ -221,8 +218,24 @@ public class AuthsignalExecutorTest {
 
         assertEquals(response.getResult(), "COMPLETE");
         assertEquals(context.getProperties(), Collections.singletonMap(FlowContextProps.CHALLENGE_ID, "challenge-1"),
-                "Only the challenge ID is kept for the flow listener");
+                "Only the challenge ID of the verified flow is kept for the flow listener");
         assertNull(claimUpdates.getClaims(), "The user does not exist yet");
+    }
+
+    @Test
+    public void testRegistrationCallbackWithoutChallengeIdFails() throws Exception {
+
+        FlowExecutionContext context = registrationContext(EMAIL, MOBILE);
+        when(client.startFlow(any())).thenReturn(started());
+        ExecutorResponse redirect = executor.execute(context);
+        callback(context, redirect);
+        AuthsignalResponse result = verified("CHALLENGE_SUCCEEDED", "temp-id",
+                step("VERIFICATION_REQUIRED", "EMAIL_OTP"), authenticator("EMAIL_OTP", EMAIL, null));
+        result.setChallengeId(null);
+        when(client.verifyFlow("sign-in", "tok")).thenReturn(result);
+
+        assertServerError(context, ExecutorErrorMessages.INVALID_VERIFY_FLOW_RESPONSE.getMessage());
+        assertNull(context.getProperty(FlowContextProps.CHALLENGE_ID));
     }
 
     @Test
@@ -363,6 +376,8 @@ public class AuthsignalExecutorTest {
 
         assertEquals(response.getResult(), "COMPLETE");
         assertNull(context.getProperty(FlowContextProps.CHALLENGE_ID));
+        assertEquals(claimUpdates.getUsername(), "alice");
+        assertEquals(claimUpdates.getClaims(), Collections.singletonMap(PASSKEY_CLAIM, "false"));
     }
 
     @Test
@@ -378,35 +393,6 @@ public class AuthsignalExecutorTest {
         ExecutorResponse response = executor.execute(context);
 
         assertExecutorError(response, ExecutorErrorMessages.USER_MISMATCH.getMessage(), USER_UUID);
-    }
-
-    @Test
-    public void testRecoveryWithEnrolmentFails() throws Exception {
-
-        // A newly enrolled authenticator must not pass the recovery.
-        FlowExecutionContext context = recoveryContext();
-        when(client.startFlow(any())).thenReturn(started());
-        ExecutorResponse redirect = executor.execute(context);
-        callback(context, redirect);
-        when(client.verifyFlow("sign-in", "tok")).thenReturn(verified("CHALLENGE_SUCCEEDED", USER_UUID,
-                step("ENROLLMENT_REQUIRED")));
-
-        ExecutorResponse response = executor.execute(context);
-
-        assertEquals(response.getResult(), "USER_ERROR");
-        assertExecutorError(response, ExecutorErrorMessages.USER_NOT_ENROLLED.getMessage(), USER_UUID);
-    }
-
-    @Test
-    public void testRecoveryWithoutCompletedStepsFails() throws Exception {
-
-        FlowExecutionContext context = recoveryContext();
-        when(client.startFlow(any())).thenReturn(started());
-        ExecutorResponse redirect = executor.execute(context);
-        callback(context, redirect);
-        when(client.verifyFlow("sign-in", "tok")).thenReturn(verified("CHALLENGE_SUCCEEDED", USER_UUID));
-
-        assertExecutorError(executor.execute(context), ExecutorErrorMessages.USER_NOT_ENROLLED.getMessage(), USER_UUID);
     }
 
     @Test
@@ -452,20 +438,6 @@ public class AuthsignalExecutorTest {
     }
 
     @Test
-    public void testSelfServiceStartsSignInFlowWithUserId() throws Exception {
-
-        when(client.startFlow(any())).thenReturn(started());
-
-        ExecutorResponse response = executor.execute(selfServiceContext());
-
-        assertEquals(response.getResult(), "EXTERNAL_REDIRECTION");
-        AuthsignalRequest request = captureStartRequest();
-        assertEquals(request.getActionCode(), "sign-in");
-        assertEquals(request.getUserId(), USER_UUID);
-        assertNull(request.getUserEmail());
-    }
-
-    @Test
     public void testActionCodeFromExecutorMetadataIsUsed() throws Exception {
 
         tenantProperties.put(ConnectorConfig.ACTION_CODE, "custom-flow");
@@ -487,7 +459,7 @@ public class AuthsignalExecutorTest {
 
         tenantProperties.put(ConnectorConfig.ACTION_CODE, "custom-flow");
         when(client.startFlow(any())).thenReturn(started());
-        FlowExecutionContext context = selfServiceContext();
+        FlowExecutionContext context = recoveryContext();
         setExecutorMetadata(context, Collections.singletonMap(ExecutorMetadata.ACTION_CODE, " "));
 
         executor.execute(context);
@@ -496,39 +468,21 @@ public class AuthsignalExecutorTest {
     }
 
     @Test
-    public void testConfiguredActionCodeUsedForSelfService() throws Exception {
+    public void testConfiguredActionCodeUsedForRecovery() throws Exception {
 
         tenantProperties.put(ConnectorConfig.ACTION_CODE, "custom-flow");
         when(client.startFlow(any())).thenReturn(started());
 
-        executor.execute(selfServiceContext());
+        executor.execute(recoveryContext());
 
         assertEquals(captureStartRequest().getActionCode(), "custom-flow");
-    }
-
-    @Test
-    public void testSelfServiceCallbackCompletes() throws Exception {
-
-        FlowExecutionContext context = selfServiceContext();
-        when(client.startFlow(any())).thenReturn(started());
-        ExecutorResponse redirect = executor.execute(context);
-        callback(context, redirect);
-        when(client.verifyFlow("sign-in", "tok")).thenReturn(verified("CHALLENGE_SUCCEEDED", USER_UUID,
-                step("VERIFICATION_REQUIRED")));
-
-        ExecutorResponse response = executor.execute(context);
-
-        assertEquals(response.getResult(), "COMPLETE");
-        assertNull(context.getProperty(FlowContextProps.CHALLENGE_ID));
-        assertEquals(claimUpdates.getUsername(), "alice");
-        assertEquals(claimUpdates.getClaims(), Collections.singletonMap(PASSKEY_CLAIM, "false"));
     }
 
     @Test
     public void testPasskeyEnrolledIsNotSavedWithoutConfiguredClaim() throws Exception {
 
         tenantProperties.remove(ConnectorConfig.PASSKEY_ENROLLED_CLAIM);
-        FlowExecutionContext context = selfServiceContext();
+        FlowExecutionContext context = recoveryContext();
         when(client.startFlow(any())).thenReturn(started());
         ExecutorResponse redirect = executor.execute(context);
         callback(context, redirect);
@@ -540,9 +494,9 @@ public class AuthsignalExecutorTest {
     }
 
     @Test
-    public void testSelfServiceCallbackSavesPasskeyEnrolledWhenUserHasPasskey() throws Exception {
+    public void testRecoveryCallbackSavesPasskeyEnrolledWhenUserHasPasskey() throws Exception {
 
-        FlowExecutionContext context = selfServiceContext();
+        FlowExecutionContext context = recoveryContext();
         when(client.startFlow(any())).thenReturn(started());
         ExecutorResponse redirect = executor.execute(context);
         callback(context, redirect);
@@ -554,9 +508,9 @@ public class AuthsignalExecutorTest {
     }
 
     @Test
-    public void testSelfServiceCallbackSavesPasskeyEnrolledWhenVerifiedWithPasskey() throws Exception {
+    public void testRecoveryCallbackSavesPasskeyEnrolledWhenVerifiedWithPasskey() throws Exception {
 
-        FlowExecutionContext context = selfServiceContext();
+        FlowExecutionContext context = recoveryContext();
         when(client.startFlow(any())).thenReturn(started());
         ExecutorResponse redirect = executor.execute(context);
         callback(context, redirect);
@@ -571,7 +525,7 @@ public class AuthsignalExecutorTest {
     public void testFailureToSavePasskeyEnrolledDoesNotFailFlow() throws Exception {
 
         claimUpdates.failWith(new UserStoreException("Claim not found"));
-        FlowExecutionContext context = selfServiceContext();
+        FlowExecutionContext context = recoveryContext();
         when(client.startFlow(any())).thenReturn(started());
         ExecutorResponse redirect = executor.execute(context);
         callback(context, redirect);
@@ -579,49 +533,6 @@ public class AuthsignalExecutorTest {
                 step("VERIFICATION_REQUIRED", "PASSKEY")));
 
         assertEquals(executor.execute(context).getResult(), "COMPLETE");
-    }
-
-    @Test
-    public void testSelfServiceCallbackForAnotherUserFails() throws Exception {
-
-        FlowExecutionContext context = selfServiceContext();
-        when(client.startFlow(any())).thenReturn(started());
-        ExecutorResponse redirect = executor.execute(context);
-        callback(context, redirect);
-        when(client.verifyFlow("sign-in", "tok")).thenReturn(verified("CHALLENGE_SUCCEEDED", "someone",
-                step("VERIFICATION_REQUIRED")));
-
-        assertExecutorError(executor.execute(context), ExecutorErrorMessages.USER_MISMATCH.getMessage(), USER_UUID);
-    }
-
-    @Test
-    public void testSelfServiceWithEnrolmentFails() throws Exception {
-
-        // A newly enrolled authenticator must not pass the verification.
-        FlowExecutionContext context = selfServiceContext();
-        when(client.startFlow(any())).thenReturn(started());
-        ExecutorResponse redirect = executor.execute(context);
-        callback(context, redirect);
-        when(client.verifyFlow("sign-in", "tok")).thenReturn(verified("CHALLENGE_SUCCEEDED", USER_UUID,
-                step("VERIFICATION_REQUIRED"), step("ENROLLMENT_OPTIONAL")));
-
-        ExecutorResponse response = executor.execute(context);
-
-        assertEquals(response.getResult(), "USER_ERROR");
-        assertExecutorError(response, ExecutorErrorMessages.USER_NOT_ENROLLED.getMessage(), USER_UUID);
-    }
-
-    @Test
-    public void testSelfServiceForUnknownUserFails() throws Exception {
-
-        FlowExecutionContext context = selfServiceContext();
-        context.getFlowUser().setUserId(null);
-
-        ExecutorResponse response = executor.execute(context);
-
-        assertEquals(response.getResult(), "USER_ERROR");
-        assertExecutorError(response, ExecutorErrorMessages.USER_NOT_IDENTIFIED.getMessage());
-        verify(client, never()).startFlow(any());
     }
 
     @Test
@@ -697,6 +608,158 @@ public class AuthsignalExecutorTest {
         assertTrue(e.getCause() instanceof AuthsignalConnectionException);
     }
 
+    @Test
+    public void testDiagnosticLogsOfFlow() throws Exception {
+
+        DiagnosticLogRecorder diagnosticLogs = DiagnosticLogRecorder.start(loggerUtils);
+        FlowExecutionContext context = recoveryContext();
+        context.setApplicationId("app-1");
+        when(client.startFlow(any())).thenReturn(started());
+        callback(context, executor.execute(context));
+        when(client.verifyFlow("sign-in", "tok")).thenReturn(verified("CHALLENGE_SUCCEEDED", USER_UUID,
+                step("VERIFICATION_REQUIRED", "PASSKEY")));
+
+        executor.execute(context);
+
+        assertEquals(diagnosticLogs.getLogs(), Arrays.asList(
+                "start-authsignal-flow | SUCCESS: Started the flow on Authsignal.",
+                "verify-authsignal-flow | SUCCESS: Received the flow result from Authsignal.",
+                "verify-authsignal-flow | SUCCESS: Authsignal verification completed successfully."));
+        assertEquals(diagnosticLogs.getComponentIds(), Collections.nCopies(3, "authsignal-service"));
+        Map<String, Object> inputs = diagnosticLogs.getInputs("Received the flow result from Authsignal.");
+        assertEquals(inputs.get("flow type"), FlowType.PASSWORD_RECOVERY);
+        assertEquals(inputs.get(LogConstants.InputKeys.APPLICATION_ID), "app-1");
+        assertEquals(inputs.get("action code"), "sign-in");
+        assertEquals(inputs.get(LogConstants.InputKeys.USER_ID), USER_UUID);
+        assertEquals(inputs.get("flow state"), "CHALLENGE_SUCCEEDED");
+        assertEquals(inputs.get("verification methods"), Collections.singletonList("PASSKEY"));
+        Map<String, Object> completedInputs =
+                diagnosticLogs.getInputs("Authsignal verification completed successfully.");
+        assertEquals(completedInputs.get("flow type"), FlowType.PASSWORD_RECOVERY);
+        assertEquals(completedInputs.get(LogConstants.InputKeys.APPLICATION_ID), "app-1");
+        assertEquals(completedInputs.get("action code"), "sign-in");
+    }
+
+    @Test
+    public void testRegistrationLogsHaveNoPersonalData() throws Exception {
+
+        DiagnosticLogRecorder diagnosticLogs = DiagnosticLogRecorder.start(loggerUtils);
+        when(client.startFlow(any())).thenReturn(started());
+
+        executor.execute(registrationContext(EMAIL, MOBILE));
+
+        Map<String, Object> inputs = diagnosticLogs.getInputs("Started the flow on Authsignal.");
+        assertEquals(inputs.get("flow type"), FlowType.REGISTRATION);
+        assertFalse(inputs.toString().contains(EMAIL), "Personal data must not be logged");
+        assertFalse(inputs.toString().contains(MOBILE), "Personal data must not be logged");
+    }
+
+    @Test
+    public void testUserErrorAfterAuthsignalCallIsLogged() throws Exception {
+
+        DiagnosticLogRecorder diagnosticLogs = DiagnosticLogRecorder.start(loggerUtils);
+        FlowExecutionContext context = recoveryContext();
+        callback(context, null);
+        when(client.verifyFlow("sign-in", "tok")).thenReturn(verified("CHALLENGE_SUCCEEDED", "someone-else",
+                step("VERIFICATION_REQUIRED")));
+
+        executor.execute(context);
+
+        String message = ExecutorErrorMessages.USER_MISMATCH.getMessage();
+        assertEquals(diagnosticLogs.getLogs(), Arrays.asList(
+                "verify-authsignal-flow | SUCCESS: Received the flow result from Authsignal.",
+                "verify-authsignal-flow | FAILED: " + message));
+        // The user ID is logged as an input only.
+        Map<String, Object> inputs = diagnosticLogs.getInputs(message);
+        assertEquals(inputs.get(LogConstants.InputKeys.USER_ID), USER_UUID);
+        assertEquals(inputs.get("action code"), "sign-in");
+    }
+
+    @Test
+    public void testUserErrorBeforeAuthsignalCallIsLogged() throws Exception {
+
+        DiagnosticLogRecorder diagnosticLogs = DiagnosticLogRecorder.start(loggerUtils);
+
+        executor.execute(registrationContext(null, null));
+
+        String message = ExecutorErrorMessages.CONTACT_DETAILS_NOT_FOUND.getMessage();
+        assertEquals(diagnosticLogs.getLogs(),
+                Collections.singletonList("start-authsignal-flow | FAILED: " + message));
+        Map<String, Object> inputs = diagnosticLogs.getInputs(message);
+        assertEquals(inputs.get("flow type"), FlowType.REGISTRATION);
+        assertEquals(inputs.get("action code"), "sign-in");
+    }
+
+    @Test
+    public void testFailedAuthsignalCallIsLogged() throws Exception {
+
+        DiagnosticLogRecorder diagnosticLogs = DiagnosticLogRecorder.start(loggerUtils);
+        FlowExecutionContext context = recoveryContext();
+        callback(context, null);
+        when(client.verifyFlow("sign-in", "tok")).thenThrow(new AuthsignalConnectionException("down", 503));
+
+        expectThrows(FlowEngineServerException.class, () -> executor.execute(context));
+
+        String message = ExecutorErrorMessages.VERIFY_FLOW_FAILED.getMessage();
+        assertEquals(diagnosticLogs.getLogs(),
+                Collections.singletonList("verify-authsignal-flow | FAILED: " + message));
+        Map<String, Object> inputs = diagnosticLogs.getInputs(message);
+        assertEquals(inputs.get("authsignal status code"), 503);
+        assertEquals(inputs.get("action code"), "sign-in");
+        assertEquals(inputs.get("flow type"), FlowType.PASSWORD_RECOVERY);
+        assertEquals(inputs.get(LogConstants.InputKeys.USER_ID), USER_UUID);
+    }
+
+    @Test
+    public void testRejectedAuthsignalCallIsLogged() throws Exception {
+
+        DiagnosticLogRecorder diagnosticLogs = DiagnosticLogRecorder.start(loggerUtils);
+        when(client.startFlow(any())).thenThrow(new AuthsignalConnectionException("rejected", 400));
+
+        executor.execute(registrationContext(EMAIL, MOBILE));
+
+        String message = ExecutorErrorMessages.START_FLOW_FAILED.getMessage();
+        assertEquals(diagnosticLogs.getLogs(),
+                Collections.singletonList("start-authsignal-flow | FAILED: " + message));
+        Map<String, Object> inputs = diagnosticLogs.getInputs(message);
+        assertEquals(inputs.get("authsignal status code"), 400);
+        assertEquals(inputs.get("action code"), "sign-in");
+        assertEquals(inputs.get("flow type"), FlowType.REGISTRATION);
+    }
+
+    @Test
+    public void testRejectedVerifyCallIsLoggedOnce() throws Exception {
+
+        DiagnosticLogRecorder diagnosticLogs = DiagnosticLogRecorder.start(loggerUtils);
+        FlowExecutionContext context = recoveryContext();
+        callback(context, null);
+        when(client.verifyFlow("sign-in", "tok")).thenThrow(new AuthsignalConnectionException("rejected", 401));
+
+        executor.execute(context);
+
+        String message = ExecutorErrorMessages.VERIFY_FLOW_FAILED.getMessage();
+        assertEquals(diagnosticLogs.getLogs(),
+                Collections.singletonList("verify-authsignal-flow | FAILED: " + message));
+        Map<String, Object> inputs = diagnosticLogs.getInputs(message);
+        assertEquals(inputs.get("authsignal status code"), 401);
+        assertEquals(inputs.get("action code"), "sign-in");
+        assertEquals(inputs.get(LogConstants.InputKeys.USER_ID), USER_UUID);
+    }
+
+    @Test
+    public void testFailureBeforeAuthsignalCallIsLogged() throws Exception {
+
+        DiagnosticLogRecorder diagnosticLogs = DiagnosticLogRecorder.start(loggerUtils);
+        tenantProperties.remove(ConnectorConfig.SECRET_KEY);
+
+        expectThrows(FlowEngineServerException.class, () -> executor.execute(recoveryContext()));
+
+        String message = ExecutorErrorMessages.SECRET_KEY_NOT_CONFIGURED.getMessage();
+        assertEquals(diagnosticLogs.getLogs(),
+                Collections.singletonList("start-authsignal-flow | FAILED: " + message));
+        assertEquals(diagnosticLogs.getInputs(message).get("flow type"), FlowType.PASSWORD_RECOVERY);
+    }
+
     private AuthsignalRequest captureStartRequest() throws Exception {
 
         ArgumentCaptor<AuthsignalRequest> captor = ArgumentCaptor.forClass(AuthsignalRequest.class);
@@ -719,11 +782,6 @@ public class AuthsignalExecutorTest {
     private FlowExecutionContext recoveryContext() {
 
         return context(FlowType.PASSWORD_RECOVERY, existingUser());
-    }
-
-    private FlowExecutionContext selfServiceContext() {
-
-        return context(FlowType.SECURED_SELF_SERVICE_OPERATIONS, existingUser());
     }
 
     private static FlowUser existingUser() {
@@ -764,7 +822,8 @@ public class AuthsignalExecutorTest {
 
         AuthsignalResponse response = new AuthsignalResponse();
         response.setChallengeUrl(CHALLENGE_URL);
-        response.setChallengeId("challenge-1");
+        // Not used: the challenge ID is taken from the verified flow.
+        response.setChallengeId("start-challenge");
         response.setChallengeToken("start-token");
         return response;
     }
@@ -812,6 +871,7 @@ public class AuthsignalExecutorTest {
         user.setUserId(userId);
         user.setAuthenticators(authenticators);
         AuthsignalResponse response = new AuthsignalResponse();
+        response.setChallengeId("challenge-1");
         response.setAction(action);
         response.setUser(user);
         return response;

@@ -35,7 +35,6 @@ import org.wso2.carbon.identity.application.authentication.framework.model.Authe
 import org.wso2.carbon.identity.application.authentication.framework.util.FrameworkConstants;
 import org.wso2.carbon.identity.application.authentication.framework.util.FrameworkUtils;
 import org.wso2.carbon.identity.central.log.mgt.utils.LogConstants;
-import org.wso2.carbon.identity.central.log.mgt.utils.LoggerUtils;
 import org.wso2.carbon.identity.core.ServiceURLBuilder;
 import org.wso2.carbon.identity.core.URLBuilderException;
 import org.wso2.carbon.identity.core.util.IdentityUtil;
@@ -45,15 +44,16 @@ import org.wso2.carbon.identity.local.auth.authsignal.constant.AuthsignalConstan
 import org.wso2.carbon.identity.local.auth.authsignal.constant.AuthsignalConstants.ActionState;
 import org.wso2.carbon.identity.local.auth.authsignal.constant.AuthsignalConstants.AuthContextProps;
 import org.wso2.carbon.identity.local.auth.authsignal.constant.AuthsignalConstants.ErrorMessages;
+import org.wso2.carbon.identity.local.auth.authsignal.constant.AuthsignalConstants.LogConstants.Messages;
 import org.wso2.carbon.identity.local.auth.authsignal.constant.AuthsignalConstants.RequestParams;
 import org.wso2.carbon.identity.local.auth.authsignal.exception.AuthsignalConnectionException;
 import org.wso2.carbon.identity.local.auth.authsignal.model.AuthsignalConfig;
 import org.wso2.carbon.identity.local.auth.authsignal.model.AuthsignalRequest;
 import org.wso2.carbon.identity.local.auth.authsignal.model.AuthsignalResponse;
+import org.wso2.carbon.identity.local.auth.authsignal.util.AuthsignalDiagnosticLogUtil;
 import org.wso2.carbon.identity.local.auth.authsignal.util.AuthsignalUtil;
 import org.wso2.carbon.user.api.UserStoreException;
 import org.wso2.carbon.user.core.util.UserCoreUtil;
-import org.wso2.carbon.utils.DiagnosticLog;
 
 import java.io.IOException;
 import java.util.Collections;
@@ -64,10 +64,9 @@ import java.util.Optional;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 
-import static org.wso2.carbon.identity.local.auth.authsignal.constant.AuthsignalConstants.LogConstants.AUTHSIGNAL_SERVICE;
-import static org.wso2.carbon.identity.local.auth.authsignal.constant.AuthsignalConstants.LogConstants.ActionIDs.INITIATE_AUTHSIGNAL_REQUEST;
 import static org.wso2.carbon.identity.local.auth.authsignal.constant.AuthsignalConstants.LogConstants.ActionIDs.LINK_AUTHSIGNAL_USER;
-import static org.wso2.carbon.identity.local.auth.authsignal.constant.AuthsignalConstants.LogConstants.ActionIDs.PROCESS_AUTHENTICATION_RESPONSE;
+import static org.wso2.carbon.identity.local.auth.authsignal.constant.AuthsignalConstants.LogConstants.ActionIDs.START_AUTHSIGNAL_FLOW;
+import static org.wso2.carbon.identity.local.auth.authsignal.constant.AuthsignalConstants.LogConstants.ActionIDs.VERIFY_AUTHSIGNAL_FLOW;
 
 /**
  * Local authenticator that adds Authsignal MFA to the login flow.
@@ -167,12 +166,21 @@ public class AuthsignalAuthenticator extends AbstractApplicationAuthenticator
         }
 
         // The user is back from the Authsignal pre-built UI.
-        if (isFlowCallback(request, context)) {
-            return super.process(request, response, context);
+        boolean isFlowCallback = isFlowCallback(request, context);
+        // Read before the callback clears it.
+        String actionCode = isFlowCallback ? (String) context.getProperty(AuthContextProps.ACTION_CODE) : null;
+        try {
+            if (isFlowCallback) {
+                return super.process(request, response, context);
+            }
+            startSignInFlow(request, response, context);
+            return AuthenticatorFlowStatus.INCOMPLETE;
+        } catch (AuthenticationFailedException e) {
+            AuthsignalDiagnosticLogUtil.triggerFailureLog(isFlowCallback ? VERIFY_AUTHSIGNAL_FLOW
+                    : START_AUTHSIGNAL_FLOW, e.getMessage(), e, () -> logInputs(context,
+                    getAuthenticatedUserFromContext(context), actionCode));
+            throw e;
         }
-
-        startSignInFlow(request, response, context);
-        return AuthenticatorFlowStatus.INCOMPLETE;
     }
 
     /**
@@ -191,18 +199,14 @@ public class AuthsignalAuthenticator extends AbstractApplicationAuthenticator
                                                  AuthenticationContext context)
             throws AuthenticationFailedException {
 
-        if (LoggerUtils.isDiagnosticLogsEnabled()) {
-            LoggerUtils.triggerDiagnosticLogEvent(buildDiagnosticLog(PROCESS_AUTHENTICATION_RESPONSE,
-                    "Processing Authsignal authentication response.", DiagnosticLog.ResultStatus.SUCCESS, context));
-        }
         AuthenticatedUser user = getAuthenticatedUserFromContext(context);
         if (user == null) {
-            throw failure(ErrorMessages.ERROR_CODE_NO_AUTHENTICATED_USER, null);
+            throw handleFailure(ErrorMessages.ERROR_CODE_NO_AUTHENTICATED_USER, null);
         }
 
         String challengeToken = request.getParameter(RequestParams.CHALLENGE_TOKEN);
         if (StringUtils.isBlank(challengeToken)) {
-            throw failure(ErrorMessages.ERROR_CODE_MISSING_TOKEN, user);
+            throw handleFailure(ErrorMessages.ERROR_CODE_MISSING_TOKEN, user);
         }
 
         String actionCode = (String) context.getProperty(AuthContextProps.ACTION_CODE);
@@ -215,59 +219,29 @@ public class AuthsignalAuthenticator extends AbstractApplicationAuthenticator
         try {
             result = createClient(config).verifyFlow(actionCode, challengeToken);
         } catch (AuthsignalConnectionException e) {
-            if (LoggerUtils.isDiagnosticLogsEnabled()) {
-                DiagnosticLog.DiagnosticLogBuilder diagnosticLogBuilder = buildDiagnosticLog(
-                        PROCESS_AUTHENTICATION_RESPONSE, ErrorMessages.ERROR_CODE_VERIFY_FLOW_FAILED.getMessage(),
-                        DiagnosticLog.ResultStatus.FAILED, context);
-                getUserId(user).ifPresent(userId ->
-                        diagnosticLogBuilder.inputParam(LogConstants.InputKeys.USER_ID, userId));
-                LoggerUtils.triggerDiagnosticLogEvent(diagnosticLogBuilder);
-            }
-            throw failure(ErrorMessages.ERROR_CODE_VERIFY_FLOW_FAILED, user, e);
+            throw handleFailure(ErrorMessages.ERROR_CODE_VERIFY_FLOW_FAILED, user, e);
         }
-
+        AuthsignalDiagnosticLogUtil.triggerSuccessLog(VERIFY_AUTHSIGNAL_FLOW, Messages.FLOW_RESULT_RECEIVED,
+                () -> AuthsignalDiagnosticLogUtil.addFlowResult(logInputs(context, user, actionCode), result));
         if (!ActionState.CHALLENGE_SUCCEEDED.equals(result.getState())) {
             if (LOG.isDebugEnabled()) {
                 LOG.debug("Authsignal flow verification returned state: " + result.getState());
             }
-            if (LoggerUtils.isDiagnosticLogsEnabled()) {
-                DiagnosticLog.DiagnosticLogBuilder diagnosticLogBuilder = buildDiagnosticLog(
-                        PROCESS_AUTHENTICATION_RESPONSE, "Authsignal challenge was not completed successfully.",
-                        DiagnosticLog.ResultStatus.FAILED, context)
-                        .inputParam(AuthsignalConstants.LogConstants.InputKeys.FLOW_STATE, result.getState());
-                getUserId(user).ifPresent(userId ->
-                        diagnosticLogBuilder.inputParam(LogConstants.InputKeys.USER_ID, userId));
-                LoggerUtils.triggerDiagnosticLogEvent(diagnosticLogBuilder);
-            }
-            throw failure(ErrorMessages.ERROR_CODE_CHALLENGE_NOT_SUCCEEDED, user);
+            throw handleFailure(ErrorMessages.ERROR_CODE_CHALLENGE_NOT_SUCCEEDED, user);
         }
 
         // Make sure the flow belongs to the same user.
         String expectedUserId = resolveAuthsignalUserId(user);
         String verifiedUserId = result.getUser() != null ? result.getUser().getUserId() : null;
         if (StringUtils.isBlank(expectedUserId) || !StringUtils.equals(expectedUserId, verifiedUserId)) {
-            if (LoggerUtils.isDiagnosticLogsEnabled()) {
-                DiagnosticLog.DiagnosticLogBuilder diagnosticLogBuilder = buildDiagnosticLog(
-                        PROCESS_AUTHENTICATION_RESPONSE, "Authsignal challenge result does not belong to the user.",
-                        DiagnosticLog.ResultStatus.FAILED, context);
-                getUserId(user).ifPresent(userId ->
-                        diagnosticLogBuilder.inputParam(LogConstants.InputKeys.USER_ID, userId));
-                LoggerUtils.triggerDiagnosticLogEvent(diagnosticLogBuilder);
-            }
-            throw failure(ErrorMessages.ERROR_CODE_CHALLENGE_MISMATCH, user);
+            throw handleFailure(ErrorMessages.ERROR_CODE_CHALLENGE_MISMATCH, user);
         }
 
         if (LOG.isDebugEnabled()) {
             LOG.debug("Authsignal sign-in flow succeeded.");
         }
-        if (LoggerUtils.isDiagnosticLogsEnabled()) {
-            DiagnosticLog.DiagnosticLogBuilder diagnosticLogBuilder = buildDiagnosticLog(
-                    PROCESS_AUTHENTICATION_RESPONSE, "Authsignal authentication successful.",
-                    DiagnosticLog.ResultStatus.SUCCESS, context);
-            getUserId(user).ifPresent(userId ->
-                    diagnosticLogBuilder.inputParam(LogConstants.InputKeys.USER_ID, userId));
-            LoggerUtils.triggerDiagnosticLogEvent(diagnosticLogBuilder);
-        }
+        AuthsignalDiagnosticLogUtil.triggerSuccessLog(VERIFY_AUTHSIGNAL_FLOW, Messages.VERIFICATION_COMPLETED,
+                () -> logInputs(context, user, actionCode));
         // Federated users have no local profile to update.
         if (!user.isFederatedUser() && StringUtils.isNotBlank(user.getUserName())) {
             AuthsignalUtil.savePasskeyEnrolledClaim(config, user.getTenantDomain(),
@@ -282,13 +256,9 @@ public class AuthsignalAuthenticator extends AbstractApplicationAuthenticator
     private void startSignInFlow(HttpServletRequest request, HttpServletResponse response,
                                  AuthenticationContext context) throws AuthenticationFailedException {
 
-        if (LoggerUtils.isDiagnosticLogsEnabled()) {
-            LoggerUtils.triggerDiagnosticLogEvent(buildDiagnosticLog(INITIATE_AUTHSIGNAL_REQUEST,
-                    "Initiating Authsignal authentication request.", DiagnosticLog.ResultStatus.SUCCESS, context));
-        }
         AuthenticatedUser user = getAuthenticatedUserFromContext(context);
         if (user == null) {
-            throw failure(ErrorMessages.ERROR_CODE_NO_AUTHENTICATED_USER, null);
+            throw handleFailure(ErrorMessages.ERROR_CODE_NO_AUTHENTICATED_USER, null);
         }
 
         AuthsignalConfig config = getAuthsignalConfig(context);
@@ -308,11 +278,13 @@ public class AuthsignalAuthenticator extends AbstractApplicationAuthenticator
         try {
             startResponse = createClient(config).startFlow(startRequest);
         } catch (AuthsignalConnectionException e) {
-            throw failure(ErrorMessages.ERROR_CODE_START_FLOW_FAILED, user, e);
+            throw handleFailure(ErrorMessages.ERROR_CODE_START_FLOW_FAILED, user, e);
         }
+        AuthsignalDiagnosticLogUtil.triggerSuccessLog(START_AUTHSIGNAL_FLOW, Messages.FLOW_STARTED,
+                () -> logInputs(context, user, actionCode));
         if (StringUtils.isBlank(startResponse.getChallengeUrl())) {
             throw new AuthenticationFailedException(ErrorMessages.ERROR_CODE_START_FLOW_FAILED.getCode(),
-                    "Authsignal did not return a challenge URL.", user);
+                    "Authsignal did not return a challenge URL when starting the flow.", user);
         }
         if (LOG.isDebugEnabled()) {
             LOG.debug("Started the Authsignal flow: " + actionCode + ". Redirecting the user to the pre-built UI.");
@@ -325,7 +297,7 @@ public class AuthsignalAuthenticator extends AbstractApplicationAuthenticator
         try {
             response.sendRedirect(startResponse.getChallengeUrl());
         } catch (IOException e) {
-            throw failure(ErrorMessages.ERROR_CODE_REDIRECTING, user, e);
+            throw handleFailure(ErrorMessages.ERROR_CODE_REDIRECTING, user, e);
         }
     }
 
@@ -361,24 +333,27 @@ public class AuthsignalAuthenticator extends AbstractApplicationAuthenticator
             if (LOG.isDebugEnabled()) {
                 LOG.debug("Completed the pending Authsignal link of the user in the tenant: " + tenantDomain);
             }
-            triggerLinkDiagnosticLog("Completed the pending Authsignal link of the user.",
-                    DiagnosticLog.ResultStatus.SUCCESS, context, authsignalUserId);
+            Map<String, String> linkedClaims = claims;
+            AuthsignalDiagnosticLogUtil.triggerSuccessLog(LINK_AUTHSIGNAL_USER, Messages.USER_LINKED,
+                    () -> AuthsignalDiagnosticLogUtil.addUpdatedClaims(logInputs(context, user, null), linkedClaims));
         } catch (AuthsignalConnectionException e) {
             if (e.isTransient()) {
                 LOG.warn("Failed to complete the pending Authsignal link of the user in the tenant: " + tenantDomain
                         + ". It will be retried at the next sign-in.");
-                triggerLinkDiagnosticLog("Failed to complete the pending Authsignal link of the user. It will be "
-                        + "retried at the next sign-in.", DiagnosticLog.ResultStatus.FAILED, context, authsignalUserId);
+                AuthsignalDiagnosticLogUtil.triggerFailureLog(LINK_AUTHSIGNAL_USER, Messages.LINK_FAILED_RETRIED, e,
+                        () -> logInputs(context, user, null));
                 return;
             }
-            triggerLinkDiagnosticLog("Authsignal rejected the pending link of the user. The pending link is removed.",
-                    DiagnosticLog.ResultStatus.FAILED, context, authsignalUserId);
             // Authsignal rejected the link, for example the challenge has expired, so do not retry it.
             LOG.warn("Authsignal rejected the pending link of the user in the tenant: " + tenantDomain
                     + ". The pending link is removed.");
+            AuthsignalDiagnosticLogUtil.triggerFailureLog(LINK_AUTHSIGNAL_USER, Messages.LINK_FAILED_NOT_RETRIED, e,
+                    () -> logInputs(context, user, null));
         } catch (AuthenticationFailedException | UserStoreException | RuntimeException e) {
             LOG.warn("Failed to complete the pending Authsignal link of the user in the tenant: " + tenantDomain
                     + ".", e);
+            AuthsignalDiagnosticLogUtil.triggerFailureLog(LINK_AUTHSIGNAL_USER, Messages.LINK_FAILED, e,
+                    () -> logInputs(context, user, null));
             return;
         }
 
@@ -387,6 +362,8 @@ public class AuthsignalAuthenticator extends AbstractApplicationAuthenticator
             AuthsignalUtil.setUserClaims(tenantDomain, username, claims);
         } catch (UserStoreException | RuntimeException e) {
             LOG.error("Failed to save the Authsignal link of the user in the tenant: " + tenantDomain + ".", e);
+            AuthsignalDiagnosticLogUtil.triggerFailureLog(LINK_AUTHSIGNAL_USER, Messages.SAVING_LINK_FAILED, e,
+                    () -> logInputs(context, user, null));
         }
     }
 
@@ -425,7 +402,7 @@ public class AuthsignalAuthenticator extends AbstractApplicationAuthenticator
                     .build()
                     .getAbsolutePublicURL();
         } catch (URLBuilderException e) {
-            throw failure(ErrorMessages.ERROR_CODE_BUILDING_CALLBACK_URL, null, e);
+            throw handleFailure(ErrorMessages.ERROR_CODE_BUILDING_CALLBACK_URL, null, e);
         }
     }
 
@@ -447,7 +424,7 @@ public class AuthsignalAuthenticator extends AbstractApplicationAuthenticator
         try {
             return AuthsignalUtil.getConfig(context.getTenantDomain());
         } catch (IdentityGovernanceException e) {
-            throw failure(ErrorMessages.ERROR_CODE_READING_CONFIG, null, e);
+            throw handleFailure(ErrorMessages.ERROR_CODE_READING_CONFIG, null, e);
         }
     }
 
@@ -462,7 +439,7 @@ public class AuthsignalAuthenticator extends AbstractApplicationAuthenticator
         try {
             return user.getUserId();
         } catch (UserIdNotFoundException e) {
-            throw failure(ErrorMessages.ERROR_CODE_RESOLVING_USER_ID, user, e);
+            throw handleFailure(ErrorMessages.ERROR_CODE_RESOLVING_USER_ID, user, e);
         }
     }
 
@@ -486,50 +463,24 @@ public class AuthsignalAuthenticator extends AbstractApplicationAuthenticator
         return null;
     }
 
-    private static void triggerLinkDiagnosticLog(String message, DiagnosticLog.ResultStatus status,
-                                                 AuthenticationContext context, String userId) {
-
-        if (LoggerUtils.isDiagnosticLogsEnabled()) {
-            LoggerUtils.triggerDiagnosticLogEvent(buildDiagnosticLog(LINK_AUTHSIGNAL_USER, message, status, context)
-                    .inputParam(LogConstants.InputKeys.USER_ID, userId));
-        }
-    }
-
-    private static DiagnosticLog.DiagnosticLogBuilder buildDiagnosticLog(String actionId, String message,
-                                                                         DiagnosticLog.ResultStatus status,
-                                                                         AuthenticationContext context) {
-
-        DiagnosticLog.DiagnosticLogBuilder diagnosticLogBuilder =
-                new DiagnosticLog.DiagnosticLogBuilder(AUTHSIGNAL_SERVICE, actionId);
-        diagnosticLogBuilder.resultMessage(message)
-                .logDetailLevel(DiagnosticLog.LogDetailLevel.APPLICATION)
-                .resultStatus(status)
-                .inputParam(LogConstants.InputKeys.STEP, context.getCurrentStep())
-                .inputParams(getApplicationDetails(context));
-        return diagnosticLogBuilder;
-    }
-
     /**
-     * Add application details to a map.
-     *
-     * @param context AuthenticationContext.
-     * @return Map with application details.
+     * Get the inputs of a sign-in diagnostic log: the step, the application, the action code and the user ID.
      */
-    private static Map<String, String> getApplicationDetails(AuthenticationContext context) {
+    private static Map<String, Object> logInputs(AuthenticationContext context, AuthenticatedUser user,
+                                                 String actionCode) {
 
-        Map<String, String> applicationDetailsMap = new HashMap<>();
+        Map<String, Object> inputs = AuthsignalDiagnosticLogUtil.commonInputs(actionCode,
+                getUserId(user).orElse(null));
+        inputs.put(LogConstants.InputKeys.STEP, context.getCurrentStep());
         FrameworkUtils.getApplicationResourceId(context).ifPresent(applicationId ->
-                applicationDetailsMap.put(LogConstants.InputKeys.APPLICATION_ID, applicationId));
+                inputs.put(LogConstants.InputKeys.APPLICATION_ID, applicationId));
         FrameworkUtils.getApplicationName(context).ifPresent(applicationName ->
-                applicationDetailsMap.put(LogConstants.InputKeys.APPLICATION_NAME, applicationName));
-        return applicationDetailsMap;
+                inputs.put(LogConstants.InputKeys.APPLICATION_NAME, applicationName));
+        return inputs;
     }
 
     /**
      * Get the user ID of a local user. Federated users are skipped, as their subject identifier may be personal data.
-     *
-     * @param user Authenticated user.
-     * @return User ID.
      */
     private static Optional<String> getUserId(AuthenticatedUser user) {
 
@@ -546,13 +497,13 @@ public class AuthsignalAuthenticator extends AbstractApplicationAuthenticator
         }
     }
 
-    private static AuthenticationFailedException failure(ErrorMessages error, AuthenticatedUser user) {
+    private AuthenticationFailedException handleFailure(ErrorMessages error, AuthenticatedUser user) {
 
         return new AuthenticationFailedException(error.getCode(), error.getMessage(), user);
     }
 
-    private static AuthenticationFailedException failure(ErrorMessages error, AuthenticatedUser user,
-                                                         Throwable cause) {
+    private AuthenticationFailedException handleFailure(ErrorMessages error, AuthenticatedUser user,
+                                                        Throwable cause) {
 
         return new AuthenticationFailedException(error.getCode(), error.getMessage(), user, cause);
     }

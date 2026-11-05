@@ -105,6 +105,23 @@ public class AuthsignalResponse {
     }
 
     /**
+     * @return The verification methods of the steps completed in this flow, such as EMAIL_OTP or PASSKEY.
+     */
+    public List<String> getVerificationMethods() {
+
+        List<String> verificationMethods = new ArrayList<>();
+        if (action != null) {
+            for (Step step : action.getCompletedSteps()) {
+                if (step.getVerificationMethod() != null
+                        && !verificationMethods.contains(step.getVerificationMethod())) {
+                    verificationMethods.add(step.getVerificationMethod());
+                }
+            }
+        }
+        return verificationMethods;
+    }
+
+    /**
      * @return True if the user has a passkey on Authsignal, including one enrolled in this flow.
      */
     public boolean hasPasskey() {

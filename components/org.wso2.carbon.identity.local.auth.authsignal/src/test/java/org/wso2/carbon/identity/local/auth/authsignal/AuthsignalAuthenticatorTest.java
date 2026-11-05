@@ -35,6 +35,7 @@ import org.wso2.carbon.identity.application.authentication.framework.model.Authe
 import org.wso2.carbon.identity.application.authentication.framework.util.FrameworkConstants;
 import org.wso2.carbon.identity.application.common.model.Property;
 import org.wso2.carbon.identity.application.common.model.ServiceProvider;
+import org.wso2.carbon.identity.central.log.mgt.utils.LogConstants;
 import org.wso2.carbon.identity.central.log.mgt.utils.LoggerUtils;
 import org.wso2.carbon.identity.core.util.IdentityUtil;
 import org.wso2.carbon.identity.governance.IdentityGovernanceException;
@@ -49,8 +50,10 @@ import org.wso2.carbon.identity.local.auth.authsignal.model.AuthsignalConfig;
 import org.wso2.carbon.identity.local.auth.authsignal.model.AuthsignalRequest;
 import org.wso2.carbon.identity.local.auth.authsignal.model.AuthsignalResponse;
 import org.wso2.carbon.identity.local.auth.authsignal.util.ClaimUpdateRecorder;
+import org.wso2.carbon.identity.local.auth.authsignal.util.DiagnosticLogRecorder;
 import org.wso2.carbon.user.api.UserStoreException;
 
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
@@ -83,7 +86,6 @@ public class AuthsignalAuthenticatorTest {
     private static final String CHALLENGE_URL = "https://signin.authsignal.com/challenge";
     private static final String PASSKEY_CLAIM = "http://wso2.org/claims/authsignalPasskeyEnrolled";
 
-    private MockedStatic<LoggerUtils> loggerUtils;
     private AuthsignalClient client;
     private HttpServletRequest request;
     private HttpServletResponse response;
@@ -95,11 +97,12 @@ public class AuthsignalAuthenticatorTest {
     private TestableAuthenticator authenticator;
     private MockedStatic<IdentityUtil> identityUtil;
     private ClaimUpdateRecorder claimUpdates;
+    private MockedStatic<LoggerUtils> loggerUtils;
 
     @BeforeMethod
     public void setUp() {
 
-        // Diagnostic logs are disabled, as they need a running server.
+        // Diagnostic logs are disabled unless a test records them, as they need a running server.
         loggerUtils = mockStatic(LoggerUtils.class);
         client = mock(AuthsignalClient.class);
         request = mock(HttpServletRequest.class);
@@ -157,9 +160,10 @@ public class AuthsignalAuthenticatorTest {
     @AfterMethod
     public void tearDown() {
 
-        loggerUtils.close();
         identityUtil.close();
         claimUpdates.close();
+        loggerUtils.close();
+        LoggerUtils.isLogMaskingEnable = false;
         AuthsignalConnectorDataHolder.setIdentityGovernanceService(null);
     }
 
@@ -542,6 +546,148 @@ public class AuthsignalAuthenticatorTest {
         authenticator.process(request, response, context);
 
         verify(client, never()).identifyUser(anyString(), anyString());
+    }
+
+    @Test
+    public void testDiagnosticLogsOfSignIn() throws Exception {
+
+        DiagnosticLogRecorder diagnosticLogs = DiagnosticLogRecorder.start(loggerUtils);
+        ServiceProvider serviceProvider = new ServiceProvider();
+        serviceProvider.setApplicationName("my-app");
+        serviceProvider.setApplicationResourceId("app-1");
+        context.getSequenceConfig().setApplicationConfig(new ApplicationConfig(serviceProvider, "carbon.super"));
+        when(client.startFlow(any())).thenReturn(started());
+        authenticator.process(request, response, context);
+        flowStarted();
+        AuthsignalResponse result = verified("CHALLENGE_SUCCEEDED", USER_ID);
+        AuthsignalResponse.Step step = new AuthsignalResponse.Step();
+        step.setVerificationMethod("PASSKEY");
+        result.getAction().setCompletedSteps(Collections.singletonList(step));
+        when(client.verifyFlow("sign-in", "tok")).thenReturn(result);
+
+        authenticator.process(request, response, context);
+
+        assertEquals(diagnosticLogs.getLogs(), Arrays.asList(
+                "start-authsignal-flow | SUCCESS: Started the flow on Authsignal.",
+                "verify-authsignal-flow | SUCCESS: Received the flow result from Authsignal.",
+                "verify-authsignal-flow | SUCCESS: Authsignal verification completed successfully."));
+        assertEquals(diagnosticLogs.getComponentIds(), Collections.nCopies(3, "authsignal-service"));
+        Map<String, Object> inputs = diagnosticLogs.getInputs("Received the flow result from Authsignal.");
+        assertEquals(inputs.get("action code"), "sign-in");
+        assertEquals(inputs.get(LogConstants.InputKeys.USER_ID), USER_ID);
+        assertEquals(inputs.get(LogConstants.InputKeys.APPLICATION_ID), "app-1");
+        assertEquals(inputs.get(LogConstants.InputKeys.APPLICATION_NAME), "my-app");
+        assertEquals(inputs.get(LogConstants.InputKeys.STEP), context.getCurrentStep());
+        assertEquals(inputs.get("flow state"), "CHALLENGE_SUCCEEDED");
+        assertEquals(inputs.get("verification methods"), Collections.singletonList("PASSKEY"));
+        assertEquals(diagnosticLogs.getInputs("Started the flow on Authsignal.").get("action code"), "sign-in");
+    }
+
+    @Test
+    public void testFailureAfterAuthsignalCallIsLogged() throws Exception {
+
+        DiagnosticLogRecorder diagnosticLogs = DiagnosticLogRecorder.start(loggerUtils);
+        flowStarted();
+        when(client.verifyFlow("sign-in", "tok")).thenReturn(verified("CHALLENGE_FAILED", USER_ID));
+
+        expectThrows(AuthenticationFailedException.class, () -> authenticator.process(request, response, context));
+
+        String message = AuthsignalConstants.ErrorMessages.ERROR_CODE_CHALLENGE_NOT_SUCCEEDED.getMessage();
+        assertEquals(diagnosticLogs.getLogs(), Arrays.asList(
+                "verify-authsignal-flow | SUCCESS: Received the flow result from Authsignal.",
+                "verify-authsignal-flow | FAILED: " + message));
+        assertEquals(diagnosticLogs.getInputs(message).get("action code"), "sign-in");
+    }
+
+    @Test
+    public void testFailedAuthsignalCallIsLogged() throws Exception {
+
+        DiagnosticLogRecorder diagnosticLogs = DiagnosticLogRecorder.start(loggerUtils);
+        flowStarted();
+        when(client.verifyFlow("sign-in", "tok")).thenThrow(new AuthsignalConnectionException("down", 503));
+
+        expectThrows(AuthenticationFailedException.class, () -> authenticator.process(request, response, context));
+
+        String message = AuthsignalConstants.ErrorMessages.ERROR_CODE_VERIFY_FLOW_FAILED.getMessage();
+        assertEquals(diagnosticLogs.getLogs(),
+                Collections.singletonList("verify-authsignal-flow | FAILED: " + message));
+        Map<String, Object> inputs = diagnosticLogs.getInputs(message);
+        assertEquals(inputs.get("authsignal status code"), 503);
+        assertEquals(inputs.get("action code"), "sign-in");
+        assertEquals(inputs.get(LogConstants.InputKeys.USER_ID), USER_ID);
+    }
+
+    @Test
+    public void testFailureBeforeAuthsignalCallIsLogged() {
+
+        DiagnosticLogRecorder diagnosticLogs = DiagnosticLogRecorder.start(loggerUtils);
+        parameters.remove(ConnectorConfig.SECRET_KEY);
+
+        expectThrows(AuthenticationFailedException.class, () -> authenticator.process(request, response, context));
+
+        assertEquals(diagnosticLogs.getLogs(), Collections.singletonList("start-authsignal-flow | FAILED: "
+                + AuthsignalConstants.ErrorMessages.ERROR_CODE_SECRET_KEY_NOT_CONFIGURED.getMessage()));
+    }
+
+    @Test
+    public void testPendingLinkIsLogged() throws Exception {
+
+        DiagnosticLogRecorder diagnosticLogs = DiagnosticLogRecorder.start(loggerUtils);
+        claimUpdates.storeClaim(AuthsignalConstants.CHALLENGE_ID_CLAIM, "challenge-1");
+        claimUpdates.storeClaim(AuthsignalConstants.EMAIL_CLAIM, "alice@example.com");
+        when(client.identifyUser(USER_ID, "challenge-1")).thenReturn(identified("alice@example.com"));
+        when(client.startFlow(any())).thenReturn(started());
+
+        authenticator.process(request, response, context);
+
+        assertEquals(diagnosticLogs.getLogs(), Arrays.asList(
+                "link-authsignal-user | SUCCESS: Linked the Authsignal user to the WSO2 user.",
+                "start-authsignal-flow | SUCCESS: Started the flow on Authsignal."));
+        Map<String, Object> inputs = diagnosticLogs.getInputs("Linked the Authsignal user to the WSO2 user.");
+        assertEquals(inputs.get(LogConstants.InputKeys.USER_ID), USER_ID);
+        Map<String, String> updatedClaims = new HashMap<>();
+        updatedClaims.put(AuthsignalConstants.EMAIL_VERIFIED_CLAIM, "true");
+        updatedClaims.put(PASSKEY_CLAIM, "false");
+        assertEquals(inputs.get("updated claims"), updatedClaims);
+        assertFalse(inputs.toString().contains("alice@example.com"), "Personal data must not be logged");
+    }
+
+    @Test
+    public void testPendingLinkFailureIsLogged() throws Exception {
+
+        DiagnosticLogRecorder diagnosticLogs = DiagnosticLogRecorder.start(loggerUtils);
+        claimUpdates.storeClaim(AuthsignalConstants.CHALLENGE_ID_CLAIM, "challenge-1");
+        when(client.identifyUser(anyString(), anyString())).thenThrow(new AuthsignalConnectionException("down", 503));
+        when(client.startFlow(any())).thenReturn(started());
+
+        authenticator.process(request, response, context);
+
+        String message = "Failed to link the Authsignal user to the WSO2 user. The link will be retried at the "
+                + "user's next sign-in.";
+        assertEquals(diagnosticLogs.getLogs(), Arrays.asList(
+                "link-authsignal-user | FAILED: " + message,
+                "start-authsignal-flow | SUCCESS: Started the flow on Authsignal."));
+        assertEquals(diagnosticLogs.getInputs(message).get("authsignal status code"), 503);
+    }
+
+    @Test
+    public void testLoggedDataIsMaskedIfNotLoggable() throws Exception {
+
+        DiagnosticLogRecorder diagnosticLogs = DiagnosticLogRecorder.start(loggerUtils);
+        LoggerUtils.isLogMaskingEnable = true;
+        loggerUtils.when(() -> LoggerUtils.getMaskedClaimValue("http://wso2.org/claims/userid", USER_ID))
+                .thenReturn("masked-id");
+        loggerUtils.when(() -> LoggerUtils.getMaskedClaimsMap(any()))
+                .thenReturn(Collections.singletonMap(PASSKEY_CLAIM, "f***e"));
+        claimUpdates.storeClaim(AuthsignalConstants.CHALLENGE_ID_CLAIM, "challenge-1");
+        when(client.identifyUser(USER_ID, "challenge-1")).thenReturn(identified(null));
+        when(client.startFlow(any())).thenReturn(started());
+
+        authenticator.process(request, response, context);
+
+        Map<String, Object> inputs = diagnosticLogs.getInputs("Linked the Authsignal user to the WSO2 user.");
+        assertEquals(inputs.get(LogConstants.InputKeys.USER_ID), "masked-id");
+        assertEquals(inputs.get("updated claims"), Collections.singletonMap(PASSKEY_CLAIM, "f***e"));
     }
 
     private static AuthsignalResponse identified(String email) {

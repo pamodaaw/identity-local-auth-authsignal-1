@@ -87,8 +87,7 @@ public class AuthsignalConnectorConfig implements IdentityConnectorConfig {
         descriptionMapping.put(ConnectorConfig.REGION,
                 "Region of the Authsignal tenant: us, eu, au, ca or uk");
         descriptionMapping.put(ConnectorConfig.ACTION_CODE,
-                "Action code of the Authsignal flow used at sign-in and in registration, password recovery and"
-                        + " self-service flows");
+                "Action code of the Authsignal flow used");
         descriptionMapping.put(ConnectorConfig.PASSKEY_ENROLLED_CLAIM,
                 "URI of the local claim set to true or false based on whether the user has a passkey on Authsignal."
                         + " Leave empty to not update any claim");
