@@ -1,0 +1,23 @@
+port = 9090
+maxAttempts = 2
+requestTimeout = 2
+authsignalBaseUrl = "http://localhost:9091/v1"
+
+[[tenants]]
+name = "acme.com"
+webhookSecret = "test-webhook-secret"
+region = "eu"
+authsignalSecretKey = "test-secret-key"
+
+[[tenants]]
+name = "nodelete"
+webhookSecret = "nodelete-webhook-secret"
+authsignalSecretKey = "nodelete-secret-key"
+deleteUsers = false
+syncContactDetails = false
+
+[[tenants]]
+name = "unverified"
+webhookSecret = "unverified-webhook-secret"
+authsignalSecretKey = "unverified-secret-key"
+requireVerifiedContactDetails = false

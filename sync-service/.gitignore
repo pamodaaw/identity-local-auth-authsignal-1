@@ -1,0 +1,3 @@
+target/
+# Local run settings with secrets; tests/Config.toml is committed.
+/Config.toml
