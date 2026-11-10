@@ -73,7 +73,7 @@ public class AuthsignalConfig {
     }
 
     /**
-     * @return Action code of the Authsignal flow used in all flows.
+     * @return Default action code of the Authsignal flow.
      */
     public String getActionCode() {
 

@@ -100,7 +100,7 @@ masks it in responses. Only send the properties you want to change; the others k
 |---|---|---|
 | `__secret__.Authsignal.SecretKey` | – (required) | Authsignal Server API key (Authsignal Portal > Settings > API keys). |
 | `Authsignal.Region` | `us` | Region of the Authsignal tenant: `us`, `eu`, `au`, `ca` or `uk`, which selects the API base URL (`https://api.authsignal.com/v1` or `https://<region>.api.authsignal.com/v1`). Match it to the API Host shown in the Authsignal Portal. Tenants pick a region rather than a URL, so the server only calls Authsignal's own hosts. |
-| `Authsignal.ActionCode` | `sign-in` | Action code of the Authsignal flow used at sign-in and in all registration, invited-user registration and password recovery flows. |
+| `Authsignal.ActionCode` | `sign-in` | Default action code of the Authsignal flow, used at sign-in and in all registration, invited-user registration and password recovery flows. A flow node ([Setup](#setup)) or the adaptive authentication script ([Action code from the script](#action-code-from-the-script)) can override it. |
 | `Authsignal.PasskeyEnrolledClaim` | _(empty)_ | URI of the local claim set to whether the user has a passkey on Authsignal, for example `http://wso2.org/claims/authsignalPasskeyEnrolled`. Not updated when empty. See [Passkey enrolled claim](#passkey-enrolled-claim). |
 
 Each Authsignal API call has a fixed 10 second timeout. It is not configurable, so that one tenant cannot hold server
@@ -110,6 +110,28 @@ Calls go through the identity server's shared external API client. A call that f
 on a dropped connection or a timeout, is retried. The retry count, connection pool size and connections per route are
 the server-wide `[external_api_client]` settings in `deployment.toml`. Calls that get an HTTP error status are not
 retried.
+
+### Action code from the script
+
+The adaptive authentication script of an application can set the action code of the sign-in flow, overriding
+`Authsignal.ActionCode`. For example, to use the `step-up` flow for administrators:
+
+```js
+var onLoginRequest = function (context) {
+    executeStep(1, {
+        onSuccess: function (context) {
+            var isAdmin = hasAnyOfTheRoles(context.currentKnownSubject, ["admin"]);
+            executeStep(2, {
+                authenticatorParams: {
+                    local: {
+                        "authsignal-authenticator": { actionCode: isAdmin ? "step-up" : "sign-in" }
+                    }
+                }
+            }, {});
+        }
+    });
+};
+```
 
 ### App-native (API-based) authentication
 

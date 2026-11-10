@@ -160,6 +160,19 @@ public class AuthsignalConstants {
     }
 
     /**
+     * Authenticator parameters set from the adaptive authentication script.
+     */
+    public static class RuntimeParams {
+
+        private RuntimeParams() {
+
+        }
+
+        // Action code of the Authsignal flow, overriding the connector configuration.
+        public static final String ACTION_CODE = "actionCode";
+    }
+
+    /**
      * Authentication context property keys of a pending Authsignal flow.
      */
     public static class AuthContextProps {

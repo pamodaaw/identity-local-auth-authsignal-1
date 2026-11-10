@@ -274,6 +274,25 @@ public class AuthsignalAuthenticatorTest {
     }
 
     @Test
+    public void testScriptActionCodeOverridesConfiguredActionCode() throws Exception {
+
+        parameters.put(ConnectorConfig.ACTION_CODE, "custom-flow");
+        Map<String, String> params = new HashMap<>();
+        params.put("actionCode", "step-up");
+        Map<String, Map<String, String>> authenticatorParams = new HashMap<>();
+        authenticatorParams.put("authsignal-authenticator", params);
+        context.addAuthenticatorParams(authenticatorParams);
+        when(client.startFlow(any())).thenReturn(started());
+
+        authenticator.process(request, response, context);
+
+        ArgumentCaptor<AuthsignalRequest> captor = ArgumentCaptor.forClass(AuthsignalRequest.class);
+        verify(client).startFlow(captor.capture());
+        assertEquals(captor.getValue().getActionCode(), "step-up");
+        assertEquals(context.getProperty(AuthContextProps.ACTION_CODE), "step-up");
+    }
+
+    @Test
     public void testStartFlowWithoutChallengeUrlFails() throws Exception {
 
         when(client.startFlow(any())).thenReturn(new AuthsignalResponse());
