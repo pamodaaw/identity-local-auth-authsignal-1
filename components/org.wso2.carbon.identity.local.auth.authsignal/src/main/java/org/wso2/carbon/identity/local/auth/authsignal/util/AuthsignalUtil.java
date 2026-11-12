@@ -119,28 +119,11 @@ public final class AuthsignalUtil {
     }
 
     /**
-     * Add the passkey enrolled claim to the claims, if the tenant has one configured.
-     *
-     * @param claims          Claims to add to.
-     * @param config          Tenant configuration.
-     * @param passkeyEnrolled Whether the user has a passkey on Authsignal.
-     */
-    public static void updatePasskeyEnrolledClaim(Map<String, String> claims, AuthsignalConfig config,
-                                                  boolean passkeyEnrolled) {
-
-        String claimUri = config.getPasskeyEnrolledClaim();
-        if (claimUri != null) {
-            claims.put(claimUri, String.valueOf(passkeyEnrolled));
-        }
-    }
-
-    /**
      * Link a user to the Authsignal user of their registration and get the claims to save on the user once linked.
      * Calls that get no response are retried by the external API client. Other transient errors are not retried
      * here, so the caller must leave the link for a later sign-in.
      *
      * @param client      Authsignal client of the tenant.
-     * @param config      Tenant configuration.
      * @param userId      WSO2 user ID of the user, which becomes the Authsignal user ID.
      * @param challengeId Challenge ID of the registration flow.
      * @param email       Email address of the user, if any.
@@ -149,22 +132,21 @@ public final class AuthsignalUtil {
      * @throws AuthsignalConnectionException If the link failed. It is transient if Authsignal could not be reached, so
      *                                       the link must be retried later.
      */
-    public static Map<String, String> syncUserIdToAuthsignal(AuthsignalClient client, AuthsignalConfig config,
-                                                             String userId, String challengeId, String email,
-                                                             String mobile) throws AuthsignalConnectionException {
+    public static Map<String, String> syncUserIdToAuthsignal(AuthsignalClient client, String userId,
+                                                             String challengeId, String email, String mobile)
+            throws AuthsignalConnectionException {
 
         AuthsignalResponse response = client.identifyUser(userId, challengeId);
-        return resolveUserClaimsToBeUpdated(config, response, email, mobile);
+        return resolveUserClaimsToBeUpdated(response, email, mobile);
     }
 
     /**
      * Get the claims of a user just linked to the Authsignal user of their registration. The email / phone verified
      * claims are set only if the user verified, with email OTP or magic link / SMS or WhatsApp, the same email address
-     * / mobile number the user has. The passkey enrolled claim is set by whether the user verified a passkey. Values
-     * are never copied from Authsignal.
+     * / mobile number the user has. The passkey managed externally claim is set by whether the user verified a passkey.
+     * Values are never copied from Authsignal.
      */
-    private static Map<String, String> resolveUserClaimsToBeUpdated(AuthsignalConfig config,
-                                                                    AuthsignalResponse response, String email,
+    private static Map<String, String> resolveUserClaimsToBeUpdated(AuthsignalResponse response, String email,
                                                                     String mobile) {
 
         Map<String, String> claims = new HashMap<>();
@@ -174,31 +156,31 @@ public final class AuthsignalUtil {
         if (mobile != null && mobile.equals(response.getVerifiedPhoneNumber())) {
             claims.put(AuthsignalConstants.MOBILE_VERIFIED_CLAIM, Boolean.TRUE.toString());
         }
-        updatePasskeyEnrolledClaim(claims, config, response.hasVerifiedPasskey());
+        claims.put(AuthsignalConstants.PASSKEY_MANAGED_EXTERNALLY_CLAIM,
+                String.valueOf(response.hasVerifiedPasskey()));
         return claims;
     }
 
     /**
-     * Save whether the user has a passkey in the passkey enrolled claim, if the tenant has one configured. Errors are
-     * logged and not thrown.
+     * Save whether the user has a passkey on Authsignal in the passkey managed externally claim. Errors are logged and
+     * not thrown.
      *
-     * @param config                  Tenant configuration.
      * @param tenantDomain            Tenant domain of the user.
      * @param domainQualifiedUsername Username with the user store domain.
-     * @param passkeyEnrolled         Whether the user has a passkey on Authsignal.
+     * @param hasPasskey              Whether the user has a passkey on Authsignal.
      */
-    public static void savePasskeyEnrolledClaim(AuthsignalConfig config, String tenantDomain,
-                                                String domainQualifiedUsername, boolean passkeyEnrolled) {
+    public static void savePasskeyManagedExternallyClaim(String tenantDomain, String domainQualifiedUsername,
+                                                         boolean hasPasskey) {
 
-        Map<String, String> claims = new HashMap<>();
-        updatePasskeyEnrolledClaim(claims, config, passkeyEnrolled);
-        if (claims.isEmpty() || StringUtils.isBlank(domainQualifiedUsername)) {
+        if (StringUtils.isBlank(domainQualifiedUsername)) {
             return;
         }
+        Map<String, String> claims = new HashMap<>();
+        claims.put(AuthsignalConstants.PASSKEY_MANAGED_EXTERNALLY_CLAIM, String.valueOf(hasPasskey));
         try {
             setUserClaims(tenantDomain, domainQualifiedUsername, claims);
         } catch (UserStoreException | RuntimeException e) {
-            LOG.error("Failed to update the Authsignal passkey enrolled claim of the user in the tenant: "
+            LOG.error("Failed to update the passkey managed externally claim of the user in the tenant: "
                     + tenantDomain + ".", e);
         }
     }

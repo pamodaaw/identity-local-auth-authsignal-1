@@ -84,7 +84,7 @@ public class AuthsignalAuthenticatorTest {
     private static final String USER_ID = "8f1c1c0e-3a3b-4d3a-9a51-111111111111";
     private static final String CALLBACK_URL = "https://localhost:9443/commonauth?sessionDataKey=ctx-1";
     private static final String CHALLENGE_URL = "https://signin.authsignal.com/challenge";
-    private static final String PASSKEY_CLAIM = "http://wso2.org/claims/authsignalPasskeyEnrolled";
+    private static final String PASSKEY_CLAIM = AuthsignalConstants.PASSKEY_MANAGED_EXTERNALLY_CLAIM;
 
     private AuthsignalClient client;
     private HttpServletRequest request;
@@ -133,7 +133,6 @@ public class AuthsignalAuthenticatorTest {
 
         parameters = new HashMap<>();
         parameters.put(ConnectorConfig.SECRET_KEY, "secret");
-        parameters.put(ConnectorConfig.PASSKEY_ENROLLED_CLAIM, PASSKEY_CLAIM);
 
         serverParameters = new HashMap<>();
         // Tenant configuration comes from the identity governance service.
@@ -342,18 +341,7 @@ public class AuthsignalAuthenticatorTest {
     }
 
     @Test
-    public void testPasskeyEnrolledIsNotSavedWithoutConfiguredClaim() throws Exception {
-
-        parameters.remove(ConnectorConfig.PASSKEY_ENROLLED_CLAIM);
-        flowStarted();
-        when(client.verifyFlow("sign-in", "tok")).thenReturn(verified("CHALLENGE_SUCCEEDED", USER_ID));
-
-        assertEquals(authenticator.process(request, response, context), AuthenticatorFlowStatus.SUCCESS_COMPLETED);
-        assertNull(claimUpdates.getClaims());
-    }
-
-    @Test
-    public void testCallbackSavesPasskeyEnrolledWhenUserHasPasskey() throws Exception {
+    public void testCallbackSavesPasskeyManagedExternallyWhenUserHasPasskey() throws Exception {
 
         flowStarted();
         AuthsignalResponse result = verified("CHALLENGE_SUCCEEDED", USER_ID);
@@ -367,7 +355,7 @@ public class AuthsignalAuthenticatorTest {
     }
 
     @Test
-    public void testCallbackSavesPasskeyEnrolledWhenPasskeyEnrolledInFlow() throws Exception {
+    public void testCallbackSavesPasskeyManagedExternallyWhenPasskeyManagedExternallyInFlow() throws Exception {
 
         flowStarted();
         AuthsignalResponse result = verified("CHALLENGE_SUCCEEDED", USER_ID);
@@ -382,7 +370,7 @@ public class AuthsignalAuthenticatorTest {
     }
 
     @Test
-    public void testPasskeyEnrolledIsNotSavedForFederatedUser() throws Exception {
+    public void testPasskeyManagedExternallyIsNotSavedForFederatedUser() throws Exception {
 
         user.setFederatedUser(true);
         context.setProperty(AuthContextProps.ACTION_CODE, "sign-in");
@@ -394,7 +382,7 @@ public class AuthsignalAuthenticatorTest {
     }
 
     @Test
-    public void testFailureToSavePasskeyEnrolledDoesNotFailLogin() throws Exception {
+    public void testFailureToSavePasskeyManagedExternallyDoesNotFailLogin() throws Exception {
 
         claimUpdates.failWith(new UserStoreException("Claim not found"));
         flowStarted();

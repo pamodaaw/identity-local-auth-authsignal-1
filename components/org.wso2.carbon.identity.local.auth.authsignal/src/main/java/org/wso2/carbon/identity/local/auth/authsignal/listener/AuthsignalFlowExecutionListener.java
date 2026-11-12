@@ -113,7 +113,7 @@ public class AuthsignalFlowExecutionListener extends AbstractFlowExecutionListen
             Map<String, String> claims;
             try {
                 // Saved only once the user is linked, from the authenticators the user verified on Authsignal.
-                claims = AuthsignalUtil.syncUserIdToAuthsignal(createClient(config), config, flowUser.getUserId(),
+                claims = AuthsignalUtil.syncUserIdToAuthsignal(createClient(config), flowUser.getUserId(),
                         challengeId, getClaim(flowUser, AuthsignalConstants.EMAIL_CLAIM),
                         getClaim(flowUser, AuthsignalConstants.MOBILE_CLAIM));
                 if (LOG.isDebugEnabled()) {

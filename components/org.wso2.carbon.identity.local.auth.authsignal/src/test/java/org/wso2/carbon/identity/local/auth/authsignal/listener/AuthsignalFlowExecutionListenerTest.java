@@ -67,7 +67,7 @@ public class AuthsignalFlowExecutionListenerTest {
     private static final String USER_UUID = "8f1c1c0e-3a3b-4d3a-9a51-111111111111";
     private static final String EMAIL = "jane@example.com";
     private static final String MOBILE = "+94771234567";
-    private static final String PASSKEY_CLAIM = "http://wso2.org/claims/authsignalPasskeyEnrolled";
+    private static final String PASSKEY_CLAIM = AuthsignalConstants.PASSKEY_MANAGED_EXTERNALLY_CLAIM;
 
     private AuthsignalClient client;
     private Map<String, String> tenantProperties;
@@ -83,7 +83,6 @@ public class AuthsignalFlowExecutionListenerTest {
         client = mock(AuthsignalClient.class);
         tenantProperties = new HashMap<>();
         tenantProperties.put(ConnectorConfig.SECRET_KEY, "secret");
-        tenantProperties.put(ConnectorConfig.PASSKEY_ENROLLED_CLAIM, PASSKEY_CLAIM);
         listener = new TestableListener();
         claimUpdates = ClaimUpdateRecorder.start();
     }
@@ -191,28 +190,13 @@ public class AuthsignalFlowExecutionListenerTest {
     }
 
     @Test
-    public void testPasskeyEnrolledIsNotSavedWithoutConfiguredClaim() throws Exception {
+    public void testOnlyPasskeyStatusSavedWithoutVerifiedValues() throws Exception {
 
-        tenantProperties.remove(ConnectorConfig.PASSKEY_ENROLLED_CLAIM);
-        FlowExecutionContext context = withContactDetails(registrationContext(), EMAIL, null);
-        when(client.identifyUser(USER_UUID, "challenge-1")).thenReturn(identified(
-                authenticator("EMAIL_OTP", EMAIL, null), authenticator("PASSKEY", null, null)));
-
-        listener.doPostExecute(step("COMPLETE"), context);
-
-        assertEquals(claimUpdates.getClaims(),
-                Collections.singletonMap(AuthsignalConstants.EMAIL_VERIFIED_CLAIM, "true"));
-    }
-
-    @Test
-    public void testNothingSavedWithoutVerifiedValuesOrConfiguredClaim() throws Exception {
-
-        tenantProperties.remove(ConnectorConfig.PASSKEY_ENROLLED_CLAIM);
         when(client.identifyUser(USER_UUID, "challenge-1")).thenReturn(identified());
 
         listener.doPostExecute(step("COMPLETE"), registrationContext());
 
-        assertNull(claimUpdates.getClaims());
+        assertEquals(claimUpdates.getClaims(), Collections.singletonMap(PASSKEY_CLAIM, "false"));
     }
 
     @Test

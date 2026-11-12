@@ -49,6 +49,9 @@ public class AuthsignalConstants {
     // Identity claims set by WSO2 when the user verifies the email address or mobile number.
     public static final String EMAIL_VERIFIED_CLAIM = "http://wso2.org/claims/identity/emailVerified";
     public static final String MOBILE_VERIFIED_CLAIM = "http://wso2.org/claims/identity/phoneVerified";
+    // Identity claim that records whether the user has a passkey on Authsignal.
+    public static final String PASSKEY_MANAGED_EXTERNALLY_CLAIM =
+            "http://wso2.org/claims/identity/passkeyManagedExternally";
     // Challenge ID of a registration that could not be linked to the user yet.
     public static final String CHALLENGE_ID_CLAIM = "http://wso2.org/claims/authsignalChallengeId";
 
@@ -141,8 +144,6 @@ public class AuthsignalConstants {
         public static final String REGION = "Authsignal.Region";
         // The default action code of the Authsignal flow used in all journeys.
         public static final String ACTION_CODE = "Authsignal.ActionCode";
-        // URI of the claim that records whether the user has a passkey on Authsignal.
-        public static final String PASSKEY_ENROLLED_CLAIM = "Authsignal.PasskeyEnrolledClaim";
     }
 
     /**

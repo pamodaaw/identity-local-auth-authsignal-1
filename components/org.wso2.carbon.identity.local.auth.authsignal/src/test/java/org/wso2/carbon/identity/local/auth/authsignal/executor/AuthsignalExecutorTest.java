@@ -81,7 +81,7 @@ public class AuthsignalExecutorTest {
     private static final String USER_UUID = "8f1c1c0e-3a3b-4d3a-9a51-111111111111";
     private static final String EMAIL = "alice@example.com";
     private static final String MOBILE = "+94770000000";
-    private static final String PASSKEY_CLAIM = "http://wso2.org/claims/authsignalPasskeyEnrolled";
+    private static final String PASSKEY_CLAIM = AuthsignalConstants.PASSKEY_MANAGED_EXTERNALLY_CLAIM;
 
     private AuthsignalClient client;
     private Map<String, String> tenantProperties;
@@ -104,7 +104,6 @@ public class AuthsignalExecutorTest {
         client = mock(AuthsignalClient.class);
         tenantProperties = new HashMap<>();
         tenantProperties.put(ConnectorConfig.SECRET_KEY, "secret");
-        tenantProperties.put(ConnectorConfig.PASSKEY_ENROLLED_CLAIM, PASSKEY_CLAIM);
         claimUpdates = ClaimUpdateRecorder.start();
         executor = new TestableExecutor();
     }
@@ -239,7 +238,7 @@ public class AuthsignalExecutorTest {
     }
 
     @Test
-    public void testRegistrationCallbackDoesNotSavePasskeyEnrolled() throws Exception {
+    public void testRegistrationCallbackDoesNotSavePasskeyManagedExternally() throws Exception {
 
         FlowExecutionContext context = registrationContext(EMAIL, MOBILE);
         when(client.startFlow(any())).thenReturn(started());
@@ -479,22 +478,7 @@ public class AuthsignalExecutorTest {
     }
 
     @Test
-    public void testPasskeyEnrolledIsNotSavedWithoutConfiguredClaim() throws Exception {
-
-        tenantProperties.remove(ConnectorConfig.PASSKEY_ENROLLED_CLAIM);
-        FlowExecutionContext context = recoveryContext();
-        when(client.startFlow(any())).thenReturn(started());
-        ExecutorResponse redirect = executor.execute(context);
-        callback(context, redirect);
-        when(client.verifyFlow("sign-in", "tok")).thenReturn(verified("CHALLENGE_SUCCEEDED", USER_UUID,
-                step("VERIFICATION_REQUIRED", "PASSKEY")));
-
-        assertEquals(executor.execute(context).getResult(), "COMPLETE");
-        assertNull(claimUpdates.getClaims());
-    }
-
-    @Test
-    public void testRecoveryCallbackSavesPasskeyEnrolledWhenUserHasPasskey() throws Exception {
+    public void testRecoveryCallbackSavesPasskeyManagedExternallyWhenUserHasPasskey() throws Exception {
 
         FlowExecutionContext context = recoveryContext();
         when(client.startFlow(any())).thenReturn(started());
@@ -508,7 +492,7 @@ public class AuthsignalExecutorTest {
     }
 
     @Test
-    public void testRecoveryCallbackSavesPasskeyEnrolledWhenVerifiedWithPasskey() throws Exception {
+    public void testRecoveryCallbackSavesPasskeyManagedExternallyWhenVerifiedWithPasskey() throws Exception {
 
         FlowExecutionContext context = recoveryContext();
         when(client.startFlow(any())).thenReturn(started());
@@ -522,7 +506,7 @@ public class AuthsignalExecutorTest {
     }
 
     @Test
-    public void testFailureToSavePasskeyEnrolledDoesNotFailFlow() throws Exception {
+    public void testFailureToSavePasskeyManagedExternallyDoesNotFailFlow() throws Exception {
 
         claimUpdates.failWith(new UserStoreException("Claim not found"));
         FlowExecutionContext context = recoveryContext();

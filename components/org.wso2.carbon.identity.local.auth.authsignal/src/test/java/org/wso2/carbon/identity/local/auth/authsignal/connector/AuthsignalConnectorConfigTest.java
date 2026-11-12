@@ -49,8 +49,6 @@ public class AuthsignalConnectorConfigTest {
         assertEquals(defaults.getProperty(ConnectorConfig.SECRET_KEY), "");
         assertEquals(defaults.getProperty(ConnectorConfig.ACTION_CODE), "sign-in");
         assertEquals(ConnectorConfig.ACTION_CODE, "Authsignal.ActionCode");
-        // No claim is updated unless one is configured.
-        assertEquals(defaults.getProperty(ConnectorConfig.PASSKEY_ENROLLED_CLAIM), "");
     }
 
     @Test
