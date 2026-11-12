@@ -245,7 +245,7 @@ public class AuthsignalAuthenticator extends AbstractApplicationAuthenticator
                 () -> logInputs(context, user, actionCode));
         // Federated users have no local profile to update.
         if (!user.isFederatedUser() && StringUtils.isNotBlank(user.getUserName())) {
-            AuthsignalUtil.savePasskeyEnrolledClaim(config, user.getTenantDomain(),
+            AuthsignalUtil.savePasskeyManagedExternallyClaim(user.getTenantDomain(),
                     UserCoreUtil.addDomainToName(user.getUserName(), user.getUserStoreDomain()), result.hasPasskey());
         }
         context.setSubject(new AuthenticatedUser(user));
@@ -328,7 +328,7 @@ public class AuthsignalAuthenticator extends AbstractApplicationAuthenticator
 
         Map<String, String> claims = new HashMap<>();
         try {
-            claims = AuthsignalUtil.syncUserIdToAuthsignal(createClient(config), config, authsignalUserId, challengeId,
+            claims = AuthsignalUtil.syncUserIdToAuthsignal(createClient(config), authsignalUserId, challengeId,
                     AuthsignalUtil.getUserClaim(tenantDomain, username, AuthsignalConstants.EMAIL_CLAIM),
                     AuthsignalUtil.getUserClaim(tenantDomain, username, AuthsignalConstants.MOBILE_CLAIM));
             if (LOG.isDebugEnabled()) {

@@ -35,7 +35,6 @@ public class AuthsignalConfig {
     private final String secretKey;
     private final String region;
     private final String actionCode;
-    private final String passkeyEnrolledClaim;
 
     /**
      * @param tenantProperties Governance connector properties of the tenant, keyed by
@@ -48,8 +47,6 @@ public class AuthsignalConfig {
         this.secretKey = StringUtils.trimToNull(tenant.get(ConnectorConfig.SECRET_KEY));
         this.region = getString(tenant, ConnectorConfig.REGION, Defaults.REGION).toLowerCase(Locale.ROOT);
         this.actionCode = getString(tenant, ConnectorConfig.ACTION_CODE, Defaults.ACTION_CODE);
-        this.passkeyEnrolledClaim =
-                StringUtils.trimToNull(tenant.get(ConnectorConfig.PASSKEY_ENROLLED_CLAIM));
     }
 
     public String getSecretKey() {
@@ -78,14 +75,6 @@ public class AuthsignalConfig {
     public String getActionCode() {
 
         return actionCode;
-    }
-
-    /**
-     * @return URI of the claim that records whether the user has a passkey, or null if not set.
-     */
-    public String getPasskeyEnrolledClaim() {
-
-        return passkeyEnrolledClaim;
     }
 
     private static String getString(Map<String, String> params, String key, String defaultValue) {

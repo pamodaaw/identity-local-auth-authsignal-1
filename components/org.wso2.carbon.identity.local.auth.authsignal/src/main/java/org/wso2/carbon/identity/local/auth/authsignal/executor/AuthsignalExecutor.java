@@ -242,7 +242,7 @@ public class AuthsignalExecutor implements Executor {
                 break;
             case FlowType.INVITED_USER_REGISTRATION:
             case FlowType.PASSWORD_RECOVERY:
-                errorResponse = processExistingUserResult(context, config, result, actionCode);
+                errorResponse = processExistingUserResult(context, result, actionCode);
                 break;
             default:
                 throw unsupportedFlowType(context);
@@ -291,7 +291,7 @@ public class AuthsignalExecutor implements Executor {
      *
      * @return An error response, or null if the result is accepted.
      */
-    private static ExecutorResponse processExistingUserResult(FlowExecutionContext context, AuthsignalConfig config,
+    private static ExecutorResponse processExistingUserResult(FlowExecutionContext context,
                                                               AuthsignalResponse result, String actionCode) {
 
         String localUserId = localUserId(context);
@@ -303,7 +303,7 @@ public class AuthsignalExecutor implements Executor {
         FlowUser flowUser = getFlowUser(context);
         String username = StringUtils.trimToNull(flowUser.getUsername());
         if (username != null) {
-            AuthsignalUtil.savePasskeyEnrolledClaim(config, context.getTenantDomain(),
+            AuthsignalUtil.savePasskeyManagedExternallyClaim(context.getTenantDomain(),
                     IdentityUtil.addDomainToName(UserCoreUtil.removeDomainFromName(username),
                             flowUser.getUserStoreDomain()), result.hasPasskey());
         }
