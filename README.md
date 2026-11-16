@@ -76,8 +76,12 @@ Each tenant (or Asgardeo organization) has its own Authsignal configuration. It 
 (`authsignal-authenticator`, category *Multi Factor Authenticators*) and is stored with the tenant's resident IdP.
 There are no server-wide settings.
 
-Tenant admins manage it with the identity-governance REST API. The path IDs are the base64url forms of the category
-and connector names:
+In Console versions that include [wso2/identity-apps#10903](https://github.com/wso2/identity-apps/pull/10903), tenant
+admins can manage it from Console > **Connections** > **Authsignal**. The tile is shown only when the connector is
+installed.
+
+Tenant admins can also manage it with the identity-governance REST API. The path IDs are the base64url forms of the
+category and connector names:
 
 ```bash
 curl -X PATCH \
@@ -254,8 +258,9 @@ AuthsignalExecutor ── POST /flows/verify {actionCode, challengeToken}
 
 **Portal requirement:** Verify Flow needs the `challenge_token` Authsignal appends to the redirect URL; the token
 returned by Start Flow is invalidated as the user completes steps. The executor therefore requires `challenge_token`.
-The hosted portal (`accounts/execution-flow.jsp`) must post it back when it resumes the flow; current versions post
-only `code` and `state`, and may also need to stop expecting a `code` in the callback URL.
+The hosted portal (`accounts/execution-flow.jsp`) posts it back when it resumes the flow in versions that include
+[wso2/identity-apps#10787](https://github.com/wso2/identity-apps/pull/10787). Older versions post only `code` and
+`state`, so registration and password recovery cannot resume.
 
 ### Setup
 
@@ -270,8 +275,10 @@ only `code` and `state`, and may also need to stop expecting a `code` in the cal
    SMS OTP, Magic Link or authentication executors (which require a connection) as the recovery factor, so keep one
    of those before the reset step and use Authsignal as an extra check.
 
-   To use a different Authsignal flow for a node, set the `authsignalActionCode` metadata of its executor to the flow's action
-   code. For example, use a `sign-up` flow in registration:
+   To use a different Authsignal flow for a node, set **Action code** in the node's properties panel (Console versions
+   that include [wso2/identity-apps#10787](https://github.com/wso2/identity-apps/pull/10787)). It writes the
+   `authsignalActionCode` metadata of the node's executor, which you can also set directly. For example, use a
+   `sign-up` flow in registration:
 
    ```json
    "executor": {
@@ -344,5 +351,5 @@ username, email address or mobile number.
   passkey flow from [authsignal-wso2-authenticator](https://github.com/authsignal-examples/authsignal-wso2-authenticator).
 - The secret key is masked by the REST API but stored unencrypted with the tenant's resident IdP properties, as with
   other governance connectors. Encrypting it at rest would need WSO2's secret management service.
-- The connector may not appear as a form in the Console, which has dedicated screens for known connectors. The REST
-  API always works.
+- Console versions without [wso2/identity-apps#10903](https://github.com/wso2/identity-apps/pull/10903) have no screen
+  for the connector. The REST API always works.
