@@ -27,14 +27,14 @@
     <groupId>org.wso2.carbon.identity.local.auth.authsignal</groupId>
     <artifactId>identity-local-auth-authsignal</artifactId>
     <packaging>pom</packaging>
-    <version>1.0.0-SNAPSHOT</version>
+    <version>1.0.0</version>
     <name>WSO2 Carbon - Authsignal Authenticator</name>
 
     <scm>
         <url>https://github.com/wso2-extensions/identity-local-auth-authsignal.git</url>
         <developerConnection>scm:git:https://github.com/wso2-extensions/identity-local-auth-authsignal.git</developerConnection>
         <connection>scm:git:https://github.com/wso2-extensions/identity-local-auth-authsignal.git</connection>
-        <tag>HEAD</tag>
+        <tag>v1.0.0</tag>
     </scm>
 
     <modules>
