@@ -1,0 +1,17 @@
+{
+    "name": "Authsignal",
+    "owner": "WSO2",
+    "category": "Local authenticator",
+    "documentationUrl": "https://github.com/wso2-extensions/identity-local-auth-authsignal/blob/main/README.md",
+    "description": "The Authsignal connector adds Authsignal multi-factor authentication to WSO2 Identity Server. It provides a local authenticator for login flows and a flow executor for registration and password recovery, using Authsignal Flows and the Authsignal pre-built UI to offer passkeys, TOTP, SMS and email OTP.",
+    "status": "Active",
+    "labels": ["Multi-factor Authentication", "Passkey"],
+    "releases": [
+        {
+            "tagName": "v1.0.0",
+            "products": [
+                "IS 7.2.0"
+            ]
+        }
+    ]
+}
